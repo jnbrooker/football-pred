@@ -50,18 +50,20 @@ st.caption(f"Gameweek {gw} · {table['fixture'].nunique()} fixtures · {n_sims:,
            f"scoring: {preset}. Bonus is rebuilt from BPS on the simulated line and is the least certain component.")
 view = table[table["Pos"].isin(pos_filter) & (table["Start"] >= min_start)].copy()
 view["Value"] = view["Proj"] / view["Price"].replace(0, np.nan)
-show = view.sort_values("Proj", ascending=False)[
+ranked = view.sort_values("Proj", ascending=False).reset_index(drop=True)
+show = ranked[
     ["Player", "Team", "Opp", "Pos", "Price", "Status", "Start", "Min", "Proj", "Floor", "Median", "Ceiling",
      "P6", "P10", "Goals", "Assists", "CS", "Saves", "pts_bonus", "pts_defcon", "Value"]]
 st.dataframe(show.style.format({"Price": "{:.1f}", "Start": "{:.0%}", "Min": "{:.0f}", "Proj": "{:.2f}",
                                 "Floor": "{:.0f}", "Median": "{:.0f}", "Ceiling": "{:.0f}", "P6": "{:.0%}", "P10": "{:.0%}",
                                 "Goals": "{:.2f}", "Assists": "{:.2f}", "CS": "{:.0%}", "Saves": "{:.1f}",
                                 "pts_bonus": "{:.2f}", "pts_defcon": "{:.2f}", "Value": "{:.2f}"}),
-             hide_index=True, width="stretch", height=640)
+             hide_index=True, **UI.WIDE, height=640)
 
 st.subheader("Where the points come from")
-pick = st.selectbox("Player", show["Player"] + " (" + show["Team"] + ")", index=0)
-row = show.iloc[list(show["Player"] + " (" + show["Team"] + ")").index(pick)]
+labels = (ranked["Player"] + " (" + ranked["Team"] + ")").tolist()
+pick = st.selectbox("Player", labels, index=0)
+row = ranked.iloc[labels.index(pick)]
 comp = {F.COMPONENT_LABELS[k]: float(row[f"pts_{k}"]) for k in F.COMPONENT_LABELS if f"pts_{k}" in row}
 left, right = st.columns(2)
 with left:
@@ -69,7 +71,7 @@ with left:
     fig.add_bar(x=list(comp), y=list(comp.values()), marker_color=UI.ACCENT,
                 hovertemplate="%{x}: %{y:.2f}<extra></extra>")
     fig.update_layout(height=320, yaxis_title="Expected points", margin=dict(t=20, b=45, l=60, r=20))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, **UI.WIDE)
 with right:
     x = samples.get(row["player_id"])
     if x is not None:
@@ -79,7 +81,7 @@ with right:
         fig2.add_bar(x=[str(k) for k in ks], y=p, marker_color=UI.ACCENT, hovertemplate="%{x} pts: %{y:.1%}<extra></extra>")
         fig2.update_layout(height=320, xaxis_title="Points in the match", yaxis_title="Share of simulations",
                            yaxis_tickformat=".0%", margin=dict(t=20, b=45, l=60, r=20))
-        st.plotly_chart(fig2, width="stretch")
+        st.plotly_chart(fig2, **UI.WIDE)
 st.caption(f"{row['Player']}: projected {row['Proj']:.2f}, floor {row['Floor']:.0f}, ceiling {row['Ceiling']:.0f}; "
            f"starts {row['Start']:.0%}, {row['Min']:.0f} expected minutes.")
 st.caption("Every player's points are scored per simulation, so teammates and opponents keep their correlation "

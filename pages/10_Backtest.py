@@ -40,7 +40,7 @@ with st.spinner("Refitting the team layer date by date…"):
 if bt.empty:
     st.error("Nothing to score yet for this season."); st.stop()
 m = B.team_metrics(bt)
-st.dataframe(m.style.format("{:.4f}", na_rep="—"), width="stretch")
+st.dataframe(m.style.format("{:.4f}", na_rep="—"), **UI.WIDE)
 st.caption("log_loss / rps / brier: lower is better. gd_rmse: goal-difference error; shots_rmse: per-side shots error. "
            f"Matches: {len(bt)} predicted, {int(m.loc['model', 'n'])} with closing prices.")
 
@@ -52,17 +52,18 @@ with left:
                     name="home win", hovertemplate="predicted %{x:.2f}<br>actual %{y:.2f}<extra></extra>")
     fig.add_scatter(x=[0.1, 0.8], y=[0.1, 0.8], mode="lines", line=dict(dash="dash", color=UI.GREY), name="perfect")
     fig.update_layout(height=320, xaxis_title="Predicted P(home win)", yaxis_title="Actual", margin=dict(t=20, b=45, l=60, r=20))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, **UI.WIDE)
 with right:
     slope = np.polyfit(bt["exp_margin"], bt["margin"], 1)[0]
     st.metric("Calibration slope (goal difference)", f"{slope:.2f}",
               help="Actual margin regressed on predicted. 1.0 = the right amount of shrinkage; above 1 = ratings too timid.")
-    wk = bt.groupby("round").apply(lambda g: pd.Series(dict(
-        n=len(g), model_ll=-np.log(np.clip(np.where(g["outcome"] == 0, g["p_home"], np.where(g["outcome"] == 1, g["p_draw"], g["p_away"])), 1e-6, 1)).mean(),
-        market_ll=(-np.log(np.clip(np.where(g["outcome"] == 0, g["mk_home"], np.where(g["outcome"] == 1, g["mk_draw"], g["mk_away"])), 1e-6, 1)).mean()
-                   if "mk_home" in g and g["mk_home"].notna().all() else np.nan))), include_groups=False)
+    def _pick(d, h, dr, a):
+        return np.clip(np.where(d["outcome"] == 0, d[h], np.where(d["outcome"] == 1, d[dr], d[a])), 1e-6, 1)
+    bt["_model_ll"] = -np.log(_pick(bt, "p_home", "p_draw", "p_away"))
+    bt["_market_ll"] = (-np.log(_pick(bt, "mk_home", "mk_draw", "mk_away")) if "mk_home" in bt.columns else np.nan)
+    wk = bt.groupby("round").agg(n=("match_id", "size"), model_ll=("_model_ll", "mean"), market_ll=("_market_ll", "mean"))
     st.dataframe(wk.style.format({"n": "{:.0f}", "model_ll": "{:.3f}", "market_ll": "{:.3f}"}, na_rep="—"),
-                 width="stretch", height=300)
+                 **UI.WIDE, height=300)
 
 with st.expander("Largest misses"):
     bt["surprise"] = -np.log(np.clip(np.where(bt["outcome"] == 0, bt["p_home"], np.where(bt["outcome"] == 1, bt["p_draw"], bt["p_away"])), 1e-6, 1))
@@ -70,7 +71,7 @@ with st.expander("Largest misses"):
         ["date", "home", "away", "hg", "ag", "exp_hg", "exp_ag", "p_home", "p_draw", "p_away"]]
         .style.format({"exp_hg": "{:.2f}", "exp_ag": "{:.2f}", "p_home": "{:.0%}", "p_draw": "{:.0%}", "p_away": "{:.0%}",
                        "hg": "{:.0f}", "ag": "{:.0f}", "date": lambda d: f"{d:%Y-%m-%d}"}),
-        hide_index=True, width="stretch")
+        hide_index=True, **UI.WIDE)
 
 st.subheader("Player layer: shots, on target, goals, assists, key passes, saves")
 st.write("History-only squads (the FPL feed cannot be replayed), every player with 5+ prior appearances, "
@@ -86,17 +87,17 @@ if st.button("Run the player backtest (a few minutes)"):
         st.warning("No player-matches scored.")
     else:
         pm = B.player_metrics(pb)
-        st.dataframe(pm.style.format("{:.3f}"), width="stretch")
+        st.dataframe(pm.style.format("{:.3f}"), **UI.WIDE)
         st.caption("mae vs naive_mae is the test; cover_10_90 should be near 0.80; brier_ge1 vs base_ge1 (the base rate's "
                    "Brier is base × (1 − base)) for the anytime markets.")
         lm = B.lineup_metrics(pb)
         st.metric("Lineup model: Brier of P(start)", f"{lm['brier']:.3f}",
                   help=f"Base rate Brier {lm['base_brier']:.3f}; log-loss {lm['log_loss']:.3f}; {lm['n']} player-matches")
         stat = st.selectbox("Bias by projection quintile", list(pm.index))
-        st.dataframe(B.quintile_bias(pb, stat).style.format("{:.3f}"), width="stretch")
+        st.dataframe(B.quintile_bias(pb, stat).style.format("{:.3f}"), **UI.WIDE)
         with st.expander("Largest misses"):
             pb["err"] = (pb["actual"] - pb["mean"]).abs()
             st.dataframe(pb.sort_values("err", ascending=False).head(15)[
                 ["date", "player", "team", "opp", "stat", "started", "minutes", "mean", "actual", "naive"]]
                 .style.format({"mean": "{:.2f}", "naive": "{:.2f}", "date": lambda d: f"{d:%Y-%m-%d}"}),
-                hide_index=True, width="stretch")
+                hide_index=True, **UI.WIDE)

@@ -21,6 +21,11 @@ from . import players as P
 from . import roster as RO
 from . import teams as T
 
+# Streamlit >= 1.45 wants width="stretch"; older builds (anaconda ships 1.37)
+# only know use_container_width=True. One kwarg dict, spread into every call.
+_V = tuple(int(x) for x in st.__version__.split(".")[:2])
+WIDE = {"width": "stretch"} if _V >= (1, 45) else {"use_container_width": True}
+
 ACCENT = "#2e7d5b"
 ACCENT2 = "#c0563b"
 GREY = "#8a8a8a"
@@ -309,12 +314,12 @@ def stat_page(stat: str) -> None:
 
     line_metrics(x, line, cfg["label"])
     st.plotly_chart(count_chart(x, line, f"{cfg['label']} in the match", max_k=8 if stat in ("shots", "saves") else 5),
-                    width="stretch")
+                    **WIDE)
 
     left, right = st.columns([1, 1])
     with left:
         st.dataframe(threshold_table(x, cfg["title"]).style.format({"Probability": "{:.1%}"}),
-                     hide_index=True, width="stretch")
+                     hide_index=True, **WIDE)
     with right:
         rt = sim["rates"]
         st.markdown("**Where the number comes from**")
@@ -343,6 +348,6 @@ def stat_page(stat: str) -> None:
         cols = {"minutes": "Min", "shots": "Shots", "sot": "SoT", "goals": "Goals", "key_passes": "KP",
                 "assists": "Assists", "yellow": "YC", "saves": "Saves"}
         st.dataframe(pd.DataFrame({v: [float(sim[k].mean())] for k, v in cols.items()}).style.format("{:.2f}"),
-                     hide_index=True, width="stretch")
+                     hide_index=True, **WIDE)
     st.caption("Self-contained: team strength is solved from shots, never from a bookmaker line. "
                "For research and entertainment.")

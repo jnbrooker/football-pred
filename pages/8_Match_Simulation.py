@@ -92,7 +92,7 @@ with left:
                 hovertemplate="margin %{x}<br>%{y:.1%}<extra></extra>")
     fig.update_layout(height=340, bargap=0.1, showlegend=False, xaxis_title=f"{home} goal difference",
                       yaxis_title="Share of simulations", yaxis_tickformat=".0%", margin=dict(t=20, b=45, l=60, r=20))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, **UI.WIDE)
 with right:
     sc = pd.DataFrame(s["scorelines"], columns=["Scoreline", "Probability"])
     tot = sim["goals_a"] + sim["goals_b"]
@@ -101,8 +101,8 @@ with right:
     lines["Fair odds"] = lines["Probability"].map(D.decimal_odds)
     sc["Fair odds"] = sc["Probability"].map(D.decimal_odds)
     a1, a2 = st.columns(2)
-    a1.dataframe(sc.style.format({"Probability": "{:.1%}"}), hide_index=True, width="stretch")
-    a2.dataframe(lines.style.format({"Probability": "{:.1%}"}), hide_index=True, width="stretch")
+    a1.dataframe(sc.style.format({"Probability": "{:.1%}"}), hide_index=True, **UI.WIDE)
+    a2.dataframe(lines.style.format({"Probability": "{:.1%}"}), hide_index=True, **UI.WIDE)
 
 # --- box scores ----------------------------------------------------------
 st.subheader("Projected box score")
@@ -119,7 +119,7 @@ for col, team, side in ((cols[0], home, sim["box_a"]), (cols[1], away, sim["box_
         st.dataframe(show.style.format({"Start%": "{:.0%}", "Min": "{:.0f}", "Shots": "{:.2f}", "SoT": "{:.2f}",
                                         "Goals": "{:.2f}", "Anytime": "{:.0%}", "KP": "{:.2f}", "Assists": "{:.2f}",
                                         "Saves": "{:.2f}", "CS": "{:.0%}", "YC": "{:.2f}"}),
-                     hide_index=True, width="stretch", height=560)
+                     hide_index=True, **UI.WIDE, height=560)
         st.caption(f"Team: {side['team_shots'].mean():.1f} shots, {side['team_sot'].mean():.1f} on target, "
                    f"{side['team_goals'].mean():.2f} goals (own goals {side['team_og'].mean():.2f}, "
                    f"penalties {side['team_pens'].mean():.2f})")

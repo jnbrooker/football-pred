@@ -43,7 +43,7 @@ st.caption("Expected goals for / against are what each side would produce agains
            "neutral venue. Finishing and keeping are shrunk hard toward 1 — the data say they are mostly noise.")
 st.dataframe(show[cols].style.format({c: "{:.2f}" for c in cols} | {"xG/shot for": "{:.3f}", "xG/shot against": "{:.3f}",
                                                                      "Weight": "{:.0f}"}),
-             width="stretch", height=740)
+             **UI.WIDE, height=740)
 
 st.subheader("Attack vs defence")
 fig = go.Figure()
@@ -52,7 +52,7 @@ fig.add_scatter(x=t["xg_for"], y=t["xg_against"], mode="markers+text", text=t.in
                 hovertemplate="%{text}<br>for %{x:.2f}<br>against %{y:.2f}<extra></extra>")
 fig.update_layout(height=520, xaxis_title="Expected goals for (vs average)", yaxis_title="Expected goals against",
                   yaxis_autorange="reversed", margin=dict(t=20, b=45, l=60, r=20))
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, **UI.WIDE)
 
 st.subheader("Fixture read")
 teams = list(r["teams"])
