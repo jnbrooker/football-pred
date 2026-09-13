@@ -86,3 +86,38 @@ st.caption(f"{row['Player']}: projected {row['Proj']:.2f}, floor {row['Floor']:.
            f"starts {row['Start']:.0%}, {row['Min']:.0f} expected minutes.")
 st.caption("Every player's points are scored per simulation, so teammates and opponents keep their correlation "
            "(a striker's goal is his keeper's lost clean sheet). For research and entertainment.")
+
+# --- best squad under the rules -------------------------------------------------
+st.subheader("Best squad for the gameweek")
+st.write("The exact best 15 under the FPL rules (2 GK / 5 DEF / 5 MID / 3 FWD, at most three from a club), "
+         "with the starting XI, bench and **captain** chosen to maximise the XI's expected points with the "
+         "captain counted twice. Solved as an integer programme, not a greedy pick.")
+b1, b2, b3, b4 = st.columns([1, 1, 1, 2])
+budget = b1.number_input("Budget (£m)", 50.0, 150.0, 100.0, 0.5)
+objective = b2.selectbox("Maximise", ["Proj", "Median", "Ceiling", "Floor"], index=0,
+                         help="Proj = expected points; Ceiling = 90th percentile (a differentials squad); Floor = 10th.")
+bench_w = b3.slider("Bench weight", 0.0, 0.5, 0.1, 0.05,
+                    help="How much a bench player's points count in the objective (0 = cheapest legal bench).")
+all_labels = (table["Player"] + " (" + table["Team"] + ")").drop_duplicates().tolist()
+lock = b4.multiselect("Must include", all_labels, key="lock")
+excl = st.multiselect("Exclude", all_labels, key="excl")
+lab2id = dict(zip(table["Player"] + " (" + table["Team"] + ")", table["player_id"]))
+try:
+    best = F.best_squad(table, budget=budget, bench_weight=bench_w, objective=objective,
+                        locked=[lab2id[l] for l in lock], excluded=[lab2id[l] for l in excl])
+except ValueError as e:
+    st.error(str(e)); best = None
+if best is not None:
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Captain", best["captain"])
+    m2.metric("XI expected points", f"{best['points']:.1f}", help="Captain counted twice")
+    m3.metric("Cost", f"£{best['cost']:.1f}m", help=f"£{budget - best['cost']:.1f}m in the bank")
+    m4.metric("Bench expected", f"{best['bench_points']:.1f}")
+    sq = best["squad"]
+    cols = ["Role", "Player", "Team", "Opp", "Pos", "Price", "Proj", "Floor", "Ceiling", "Start", "Goals", "Assists", "CS", "Status"]
+    cols = [c for c in cols if c in sq.columns]
+    st.dataframe(sq[cols].style.format({"Price": "{:.1f}", "Proj": "{:.2f}", "Floor": "{:.0f}", "Ceiling": "{:.0f}",
+                                        "Start": "{:.0%}", "Goals": "{:.2f}", "Assists": "{:.2f}", "CS": "{:.0%}"}),
+                 hide_index=True, **UI.WIDE, height=560)
+    st.caption("Start = modelled probability of starting; a player flagged doubtful is priced at his chance of playing. "
+               "Prices are FPL's current values. Bench order is by expected points.")

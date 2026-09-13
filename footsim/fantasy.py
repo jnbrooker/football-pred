@@ -191,3 +191,86 @@ if __name__ == "__main__":
     cols = ["Player", "Team", "Pos", "Price", "Start", "Min", "Proj", "Floor", "Ceiling", "P6",
             "pts_goal", "pts_assist", "pts_cs", "pts_saves", "pts_defcon", "pts_bonus"]
     print(t.sort_values("Proj", ascending=False).head(20)[cols].to_string(index=False, float_format=lambda x: f"{x:.2f}"))
+
+
+# ---------------------------------------------------------------------------
+# Best squad under the FPL rules: an exact integer programme
+# ---------------------------------------------------------------------------
+# 15 players (2 GK, 5 DEF, 5 MID, 3 FWD), at most 3 from one club, budget
+# £100.0m; a starting XI (1 GK, 3–5 DEF, 2–5 MID, 1–3 FWD) whose expected
+# points are maximised with one captain counted twice. The bench carries a
+# small weight so the four non-starters are the best cheap options rather
+# than arbitrary. Solved exactly with scipy's MILP (HiGHS).
+
+SQUAD_RULES = dict(budget=100.0, size=15, max_per_club=3,
+                   squad={"GK": 2, "DEF": 5, "MID": 5, "FWD": 3},
+                   xi_min={"GK": 1, "DEF": 3, "MID": 2, "FWD": 1},
+                   xi_max={"GK": 1, "DEF": 5, "MID": 5, "FWD": 3}, xi=11)
+BENCH_WEIGHT = 0.1
+
+
+def best_squad(table: pd.DataFrame, budget: float = 100.0, bench_weight: float = BENCH_WEIGHT,
+               locked: list | None = None, excluded: list | None = None,
+               objective: str = "Proj") -> dict:
+    """Pick the best 15 under the rules. `table` is `gameweek_projections`
+    output (one row per player-fixture; a player with two fixtures is summed).
+    `objective` is the column to maximise (Proj, Median, Ceiling, Floor).
+    Returns dict(squad=DataFrame with Start / Captain flags, cost, points)."""
+    from scipy.optimize import milp, LinearConstraint, Bounds
+    t = table.dropna(subset=["Price"]).copy()
+    t = t[t["Price"] > 0]
+    # one row per player across the gameweek's fixtures
+    agg = {objective: "sum", "Proj": "sum", "Floor": "sum", "Ceiling": "sum", "Median": "sum", "Start": "mean",
+           "Min": "sum", "Price": "first", "Team": "first", "Pos": "first", "Player": "first", "Status": "first",
+           "Goals": "sum", "Assists": "sum", "CS": "mean"}
+    agg = {k: v for k, v in agg.items() if k in t.columns}
+    p = t.groupby("player_id").agg(agg).reset_index()
+    p["Opp"] = t.groupby("player_id")["Opp"].agg(lambda s: " + ".join(s)).values
+    p = p.reset_index(drop=True)
+    n = len(p)
+    pts = p[objective].values.astype(float)
+    # variables: x (in squad) [0:n], y (starts) [n:2n], c (captain) [2n:3n]
+    cost = np.concatenate([-bench_weight * pts, -(1 - bench_weight) * pts, -pts])
+    A, lo, hi = [], [], []
+    def row(xs=None, ys=None, cs=None):
+        r = np.zeros(3 * n)
+        if xs is not None: r[:n] = xs
+        if ys is not None: r[n:2 * n] = ys
+        if cs is not None: r[2 * n:] = cs
+        return r
+    one = np.ones(n)
+    A.append(row(xs=one)); lo.append(SQUAD_RULES["size"]); hi.append(SQUAD_RULES["size"])
+    A.append(row(ys=one)); lo.append(SQUAD_RULES["xi"]); hi.append(SQUAD_RULES["xi"])
+    A.append(row(cs=one)); lo.append(1); hi.append(1)
+    A.append(row(xs=p["Price"].values)); lo.append(0); hi.append(budget)
+    for pos, k in SQUAD_RULES["squad"].items():
+        m = (p["Pos"].values == pos).astype(float)
+        A.append(row(xs=m)); lo.append(k); hi.append(k)
+        A.append(row(ys=m)); lo.append(SQUAD_RULES["xi_min"][pos]); hi.append(SQUAD_RULES["xi_max"][pos])
+    for club in p["Team"].unique():
+        A.append(row(xs=(p["Team"].values == club).astype(float))); lo.append(0); hi.append(SQUAD_RULES["max_per_club"])
+    # y <= x, c <= y  (one row per player each)
+    for i in range(n):
+        r = np.zeros(3 * n); r[n + i] = 1; r[i] = -1; A.append(r); lo.append(-np.inf); hi.append(0)
+        r = np.zeros(3 * n); r[2 * n + i] = 1; r[n + i] = -1; A.append(r); lo.append(-np.inf); hi.append(0)
+    lb = np.zeros(3 * n); ub = np.ones(3 * n)
+    for pid in (locked or []):
+        j = np.where(p["player_id"].values == pid)[0]
+        if len(j): lb[j[0]] = 1
+    for pid in (excluded or []):
+        j = np.where(p["player_id"].values == pid)[0]
+        if len(j): ub[j[0]] = 0
+    res = milp(c=cost, constraints=LinearConstraint(np.array(A), lo, hi),
+               integrality=np.ones(3 * n), bounds=Bounds(lb, ub))
+    if res.x is None:
+        raise ValueError("No feasible squad under these rules (budget too low or too many locks).")
+    x = np.round(res.x[:n]).astype(bool); y = np.round(res.x[n:2 * n]).astype(bool); c = np.round(res.x[2 * n:]).astype(bool)
+    sq = p[x].copy()
+    sq["Start"] = y[x]; sq["Captain"] = c[x]
+    sq["Role"] = np.where(sq["Captain"], "Captain", np.where(sq["Start"], "XI", "Bench"))
+    order = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+    sq = sq.sort_values(["Start", "Pos", objective], ascending=[False, True, False], key=lambda s: s.map(order) if s.name == "Pos" else s)
+    xi_pts = float(pts[x & y].sum() + pts[x & c].sum())
+    return dict(squad=sq.reset_index(drop=True), cost=float(p.loc[x, "Price"].sum()),
+                points=xi_pts, bench_points=float(pts[x & ~y].sum()),
+                captain=str(p.loc[c, "Player"].iloc[0]) if c.any() else "")
