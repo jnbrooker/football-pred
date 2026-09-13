@@ -47,7 +47,8 @@ SUB_MINUTES_CV = 0.65
 # Team context for the match: where the player's volume and quality come from
 # ---------------------------------------------------------------------------
 
-def match_context(ctx: dict, team: str, opp: str | None, home: bool | None) -> dict:
+def match_context(ctx: dict, team: str, opp: str | None, home: bool | None,
+                  avail: dict | None = None, avail_opp: dict | None = None) -> dict:
     """Expected team shots / on-target rate / goal-per-shot for `team`, and
     the same for the opponent (for a goalkeeper), from the ratings. With
     `opp=None` (Season view, no opponent) the team faces a league-average
@@ -58,8 +59,8 @@ def match_context(ctx: dict, team: str, opp: str | None, home: bool | None) -> d
         a = _neutral_matchup(r, team, attack=True, home=home)
         b = _neutral_matchup(r, team, attack=False, home=(None if home is None else not home))
     else:
-        a = T.matchup(r, team, opp, home)
-        b = T.matchup(r, opp, team, (None if home is None else not home))
+        a = T.matchup(r, team, opp, home, avail)
+        b = T.matchup(r, opp, team, (None if home is None else not home), avail_opp)
     typical = ctx["live"]["team_vol"].get(team, ctx["live"]["team_vol"][lg_team])
     return dict(team=team, opp=opp, home=home, a=a, b=b, ratings=r,
                 team_shots=(a["shots"], TEAM_SHOT_LOGSD),
@@ -105,7 +106,8 @@ def _neutral_matchup(r: dict, team: str, attack: bool, home: bool | None) -> dic
 def draw_minutes(rng, row: pd.Series, n: int, force_start: bool | None = None) -> np.ndarray:
     """Minutes played in each simulation: start (subbed off around his usual
     minute) / substitute appearance / unused. `force_start=True` conditions
-    on starting, False on a bench role, None uses his probabilities."""
+    on starting, False on coming off the bench (he plays, as a sub), None
+    uses his probabilities."""
     if force_start is True:
         start = np.ones(n, bool)
     elif force_start is False:
@@ -115,7 +117,7 @@ def draw_minutes(rng, row: pd.Series, n: int, force_start: bool | None = None) -
     off = rng.random(n) < float(row["p_suboff"])
     off_min = np.clip(rng.normal(float(row["suboff_min"]), RO.LG_SUBOFF_SD, n), 30, 90)
     start_min = np.where(off, off_min, 90.0)
-    sub_app = rng.random(n) < float(row["p_subapp"])
+    sub_app = (rng.random(n) < float(row["p_subapp"])) if force_start is None else np.ones(n, bool)
     k, th = D.gamma_params(float(row["sub_minutes"]), SUB_MINUTES_CV * float(row["sub_minutes"]))
     sub_min = np.clip(rng.gamma(k, th, n), 1, 45)
     return np.where(start, start_min, np.where(sub_app, sub_min, 0.0))

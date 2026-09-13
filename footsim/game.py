@@ -301,14 +301,17 @@ def _taker_weights(roster: pd.DataFrame) -> np.ndarray:
 
 def simulate_match(ctx: dict, roster_a: pd.DataFrame, roster_b: pd.DataFrame,
                    team_a: str, team_b: str, home: str | None = "a",
-                   n_sims: int = 20000, seed: int | None = None) -> dict:
-    """Simulate the fixture `n_sims` times; both box scores per simulation."""
+                   n_sims: int = 20000, seed: int | None = None,
+                   avail_a: dict | None = None, avail_b: dict | None = None) -> dict:
+    """Simulate the fixture `n_sims` times; both box scores per simulation.
+    `avail_*` are `roster.availability_factor` dicts (attack multipliers for
+    the squad actually available); None = the ratings' typical squad."""
     rng = np.random.default_rng(seed)
     n = int(n_sims)
     r = ctx["ratings"]
     ha = True if home in ("a", team_a) else False if home in ("b", team_b) else None
-    mix_a = T.matchup(r, team_a, team_b, ha)
-    mix_b = T.matchup(r, team_b, team_a, None if ha is None else not ha)
+    mix_a = T.matchup(r, team_a, team_b, ha, avail_a)
+    mix_b = T.matchup(r, team_b, team_a, None if ha is None else not ha, avail_b)
     sides = _score_sides(rng, mix_a, mix_b, n)
     lu_a = draw_lineups(rng, roster_a, n)
     lu_b = draw_lineups(rng, roster_b, n)
@@ -318,7 +321,8 @@ def simulate_match(ctx: dict, roster_a: pd.DataFrame, roster_b: pd.DataFrame,
                 goals_a=sides["a"]["points"], goals_b=sides["b"]["points"],
                 shots_a=sides["a"]["shots_total"], shots_b=sides["b"]["shots_total"],
                 sot_a=sides["a"]["sot_total"], sot_b=sides["b"]["sot_total"],
-                box_a=box_a, box_b=box_b, mix_a=mix_a, mix_b=mix_b)
+                box_a=box_a, box_b=box_b, mix_a=mix_a, mix_b=mix_b,
+                avail_a=avail_a, avail_b=avail_b)
 
 
 # ---------------------------------------------------------------------------

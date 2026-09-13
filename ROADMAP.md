@@ -330,7 +330,41 @@ difference moved 1.25× the predicted). Heavier shrinkage on *finishing*
 log-loss behind the market, capturing ~85–90% of its information over base
 rates.
 
-### 6.12 Data traps, for the next person
+### 6.12 The model's spread vs the market's (the "every match is 1–2 goals each" question)
+Against the closing market on all 378 matches of 2025/26 the model's 1X2
+probabilities correlate 0.93 with the market's but have **0.68× its spread
+on the logit scale** (P(home) sd 0.131 vs 0.172; Arsenal v Burnley 80% vs
+87%). Where the two disagree by more than five points the market is right
+(model 0.50 / market 0.60 / actual 0.61). Yet the model's own calibration
+slope is 1.0: it is calibrated *for what it knows* and knows less than the
+market. The levers tested:
+
+| lever | effect |
+|---|---|
+| rating shrinkage 6/10 → 1/2 | log-loss 0.988/1.031 → 0.974/1.027; spread 0.79/0.68 — most of what was fixable |
+| recency: long memory / flat | spread 0.79/0.75 but log-loss worse and slope < 1 (over-confident) |
+| recency: recent form | no better |
+| squad availability (§6.13) | nothing, even with hindsight lineups |
+
+The rest of the gap is information the market has and a shot model does
+not (lineups pre-announcement, motivation, other markets). A self-contained
+model should expect exactly this; the fix is not to stretch the spread.
+
+### 6.13 Squad availability as a team effect — built, fitted at zero
+`roster.availability_factor`: the expected shot production (minutes ×
+share × xG per shot, summed, split into volume and quality) of the
+available squad over the ungated squad, with starts fitted by position
+group to the team's own formation so a missing centre-back is replaced by a
+centre-back. It moves attacks by ±8% (log sd 0.08). Fitted with hindsight
+lineups on 2024–26, the coefficient that maximises the Poisson likelihood
+of goals is 0 (2025) / 0.5 (2024, flat), and the 1X2 log-loss worsens
+monotonically with it. Shown on the pages, off by default. Two reasons it
+may fail that are worth revisiting with a real pre-match feed: the team
+ratings already average over the periods without the player, and shot
+share is not the same as chance creation (a missing striker's shots go to
+teammates at lower quality than the quality ratio captures).
+
+### 6.14 Data traps, for the next person
 - Understat serves data from `getLeagueData/{league}/{season}` and
   `getMatchData/{id}` (gzip, needs `X-Requested-With`), not the page HTML.
 - Pinnacle closing prices are missing for ~45% of 2025/26 rows on
@@ -342,13 +376,11 @@ rates.
 
 ## 7. Next (ranked)
 
-1. **Availability as a team effect.** The ratings describe a unit; a squad
-   missing its striker is not that unit. Build an index (share of the
-   team's recency-weighted xG involvement ruled out) and fit it on the
-   backtest residuals, as the NFL's QB-familiarity layer was. Needs an
-   availability history — start recording the FPL feed weekly now.
-2. **Player backtest at scale** and the pseudo-count grid on it (the
-   receiving/rushing tuning of the NFL suite).
+1. **Record the FPL availability feed weekly** so a real pre-match
+   availability index can be fitted (§6.13 used hindsight lineups and found
+   nothing; a pre-match feed may differ because it is what the market sees).
+2. **Player-level team strength**: rate the XI, not the unit — the natural
+   next step if availability is to matter.
 3. **Referee and opponent effects on cards**; fouls drawn.
 4. **Prop evaluation** — Odds API `soccer_epl` markets, frozen projection,
    settled from Understat. Last, by design.

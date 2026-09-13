@@ -97,8 +97,26 @@ closing prices with the overround removed on the same matches:
 | 2025/26 | 1.027 | 1.014 | 1.07 |
 
 The model captures ~85–90% of the market's information over base rates and
-its win probabilities are calibrated (slope 1.04 / 0.99). Player-layer results
-are on the Backtest page (`python -m footsim.backtest 2025` prints them).
+its win probabilities are calibrated (slope 1.04 / 0.99). Its probabilities
+have ~0.7× the market's spread: calibrated for what it knows, and the market
+knows more (`ROADMAP.md` §6.12).
+
+**Player models** (2025/26, 36 000 player-matches, conditional on the
+player's actual role, fitted before each date) vs a trailing weighted
+average of the stat:
+
+| stat | MAE | naive MAE | bias | Brier P(≥1) | base rate Brier |
+|---|---|---|---|---|---|
+| Shots | 0.843 | 0.885 | +0.05 | 0.196 | 0.241 |
+| Shots on target | 0.448 | — | +0.01 | 0.184 | 0.212 |
+| Goals (anytime) | 0.206 | 0.223 | +0.01 | 0.099 | 0.108 |
+| Assists | 0.120 | 0.120 | 0.00 | 0.057 | 0.059 |
+| Key passes | 0.641 | 0.655 | +0.01 | 0.210 | 0.243 |
+| Saves (GK) | 1.374 | — | +0.07 | — | — |
+
+Lineup model (P(start) over every squad player): Brier 0.198 vs 0.250 for
+the base rate. 2024/25 reads the same. Everything above comes from the
+Backtest page (`python -m footsim.backtest 2025`).
 
 ## Setup & run
 

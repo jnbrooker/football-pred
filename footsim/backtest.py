@@ -219,7 +219,7 @@ def player_backtest(score_seasons, stats=PLAYER_STATS, n_prior: int = 2,
     # per-player per-match on-target and saves (actuals)
     sot_pm = shots_all.groupby(["match_id", "player_id"])["on_target"].sum()
     rng = np.random.default_rng(seed)
-    rows = []
+    rows, lineup_rows = [], []
     dates = sorted(fx["date"].dt.normalize().unique())
     for i, d in enumerate(dates):
         try:
@@ -244,6 +244,13 @@ def player_backtest(score_seasons, stats=PLAYER_STATS, n_prior: int = 2,
                     continue
                 mc = P.match_context(ctx, team, opp, home)
                 opp_goals = float(m["home_goals"] if not home else m["away_goals"])
+                # the lineup model, over the WHOLE history-only squad
+                played_ids = actual[actual["team"] == team].set_index("player_id")["started"]
+                for _, rr in ros.iterrows():
+                    lineup_rows.append(dict(match_id=int(m["match_id"]), team=team, player_id=int(rr["player_id"]),
+                                            p_start=float(rr["p_start"]),
+                                            started=int(played_ids.get(int(rr["player_id"]), 0)),
+                                            played=int(int(rr["player_id"]) in played_ids.index)))
                 for _, a in actual[actual["team"] == team].iterrows():
                     pid = int(a["player_id"])
                     row = ros[ros["player_id"] == pid]
@@ -283,7 +290,9 @@ def player_backtest(score_seasons, stats=PLAYER_STATS, n_prior: int = 2,
                         ))
         if progress:
             progress(i + 1, len(dates))
-    return pd.DataFrame(rows)
+    pb = pd.DataFrame(rows)
+    pb.attrs["lineup"] = pd.DataFrame(lineup_rows)
+    return pb
 
 
 def player_metrics(pb: pd.DataFrame) -> pd.DataFrame:
@@ -305,12 +314,16 @@ def player_metrics(pb: pd.DataFrame) -> pd.DataFrame:
 
 
 def lineup_metrics(pb: pd.DataFrame) -> dict:
-    """The lineup model: P(start) vs who started, one row per player-match."""
-    d = pb.drop_duplicates(["match_id", "player_id"])
+    """The lineup model: P(start) vs who started, over every player on the
+    history-only squad (starters, subs and absentees alike)."""
+    d = pb.attrs.get("lineup") if isinstance(pb.attrs.get("lineup"), pd.DataFrame) else None
+    if d is None or d.empty:
+        d = pb.drop_duplicates(["match_id", "player_id"])
     y = d["started"].astype(float); p = np.clip(d["p_start"], 1e-4, 1 - 1e-4)
     return dict(n=len(d), brier=float(((y - p) ** 2).mean()),
                 log_loss=float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean()),
-                base_brier=float(((y - y.mean()) ** 2).mean()))
+                base_brier=float(((y - y.mean()) ** 2).mean()),
+                start_rate=float(y.mean()), mean_p=float(p.mean()))
 
 
 def quintile_bias(pb: pd.DataFrame, stat: str) -> pd.DataFrame:
@@ -331,3 +344,66 @@ if __name__ == "__main__":
     print()
     print(player_metrics(pb).to_string(float_format=lambda x: f"{x:.3f}"))
     print("lineup:", lineup_metrics(pb))
+
+
+# ---------------------------------------------------------------------------
+# Availability: fit the coefficient on hindsight lineups
+# ---------------------------------------------------------------------------
+
+def availability_fit(score_seasons, n_prior: int = 2, recency: D.Recency = D.RECENCY_DEFAULT,
+                     coefs=(0.0, 0.5, 1.0, 1.5, 2.0), progress=None) -> dict:
+    """For every match, the attack availability factor of each side given
+    who ACTUALLY played (hindsight — the FPL status feed cannot be replayed),
+    relative to the history-only squad; then the Poisson log-likelihood of
+    the goals and the 1X2 log-loss for each candidate coefficient on the
+    log-factor. An upper bound on what a pre-match availability feed can
+    add, since real lineups are only partly known before kickoff."""
+    seasons = window(score_seasons, n_prior)
+    live_all = RO.load_live(seasons, recency, use_fpl=False)
+    fx = D.load_fixtures(tuple(score_seasons))
+    fx = fx[fx["played"]].sort_values("date")
+    rosters_all = live_all["rosters"]
+    rows = []
+    dates = sorted(fx["date"].dt.normalize().unique())
+    for i, d in enumerate(dates):
+        try:
+            ctx = _ctx_before(live_all, d, recency)
+        except ValueError:
+            continue
+        r = ctx["ratings"]
+        day = fx[fx["date"].dt.normalize() == d]
+        ung = {}
+        for _, m in day.iterrows():
+            if m["home"] not in r["teams"] or m["away"] not in r["teams"]:
+                continue
+            played = rosters_all[rosters_all["match_id"] == m["match_id"]]
+            fac = {}
+            for team in (m["home"], m["away"]):
+                try:
+                    if team not in ung:
+                        ung[team] = RO.build_roster(ctx["live"], team, use_fpl=False, lg=ctx["lg"])
+                    u = ung[team]
+                    out_ids = set(u["player_id"]) - set(played[played["team"] == team]["player_id"])
+                    fac[team] = RO.availability_factor(ctx["live"], team, ctx["lg"], ruled_out=out_ids, ungated=u)
+                except ValueError:
+                    fac[team] = dict(volume=1.0, quality=1.0, xg=1.0)
+            a = T.matchup(r, m["home"], m["away"], True); b = T.matchup(r, m["away"], m["home"], False)
+            rows.append(dict(match_id=int(m["match_id"]), home=m["home"], away=m["away"],
+                             hg=float(m["home_goals"]), ag=float(m["away_goals"]),
+                             exp_hg=a["goals"], exp_ag=b["goals"], np_hg=a["np_goals"], np_ag=b["np_goals"],
+                             fac_h=fac[m["home"]]["xg"], fac_a=fac[m["away"]]["xg"]))
+        if progress:
+            progress(i + 1, len(dates))
+    bt = pd.DataFrame(rows)
+    out = dict(n=len(bt), coefs={})
+    for c in coefs:
+        mh = (bt["exp_hg"] - bt["np_hg"]) + bt["np_hg"] * bt["fac_h"] ** c
+        ma = (bt["exp_ag"] - bt["np_ag"]) + bt["np_ag"] * bt["fac_a"] ** c
+        ll_pois = float((bt["hg"] * np.log(mh) - mh + bt["ag"] * np.log(ma) - ma).mean())
+        p = np.array([list(T.outcome_probs(x, y).values())[:3] for x, y in zip(mh, ma)])
+        o = np.where(bt["hg"] > bt["ag"], 0, np.where(bt["hg"] == bt["ag"], 1, 2))
+        ll_1x2 = float(-np.log(np.clip(p[np.arange(len(o)), o], 1e-6, 1)).mean())
+        out["coefs"][c] = dict(poisson_ll=ll_pois, log_loss_1x2=ll_1x2)
+    out["factor_sd"] = float(np.log(pd.concat([bt["fac_h"], bt["fac_a"]])).std())
+    out["table"] = bt
+    return out

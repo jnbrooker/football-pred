@@ -159,16 +159,20 @@ def game_projections(sim: dict, rules: dict, gw: int | None = None, fixture: str
 
 
 def gameweek_projections(ctx: dict, fixtures: pd.DataFrame, rules: dict, n_sims: int = 8000,
-                         seed: int = 7, progress=None) -> tuple[pd.DataFrame, dict, dict]:
+                         seed: int = 7, progress=None, use_avail: bool = True) -> tuple[pd.DataFrame, dict, dict]:
     """Every player on the gameweek's slate. `fixtures` needs home / away
     (team codes) and optionally `gw`. Returns (table, samples, sims)."""
+    from . import roster as RO
     tables, samples, sims = [], {}, {}
     for i, (_, f) in enumerate(fixtures.iterrows()):
         try:
             ra = G.roster_for(ctx, f["home"]); rb = G.roster_for(ctx, f["away"])
         except ValueError:
             continue
-        sim = G.simulate_match(ctx, ra, rb, f["home"], f["away"], home="a", n_sims=n_sims, seed=seed + i)
+        av_a = RO.availability_factor(ctx["live"], f["home"], ctx["lg"], roster=ra) if use_avail else None
+        av_b = RO.availability_factor(ctx["live"], f["away"], ctx["lg"], roster=rb) if use_avail else None
+        sim = G.simulate_match(ctx, ra, rb, f["home"], f["away"], home="a", n_sims=n_sims, seed=seed + i,
+                               avail_a=av_a, avail_b=av_b)
         label = f"{f['home']} v {f['away']}"
         t, s = game_projections(sim, rules, gw=f.get("gw"), fixture=label)
         tables.append(t); samples.update(s); sims[label] = sim

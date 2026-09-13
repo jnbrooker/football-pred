@@ -28,6 +28,7 @@ else:
     away = st.sidebar.selectbox("Away", teams, index=teams.index("ARS") if "ARS" in teams else 1)
     neutral = st.sidebar.toggle("Neutral venue", value=False)
     fx_row = None
+use_avail = UI.availability_toggle("ms")
 n_sims = st.sidebar.select_slider("Simulations", [5000, 10000, 20000, 50000], value=20000)
 
 st.title("⚽ Match Simulation")
@@ -39,9 +40,12 @@ try:
 except ValueError as e:
     st.error(str(e)); st.stop()
 
-sim = G.simulate_match(ctx, ra, rb, home, away, home=None if neutral else "a", n_sims=n_sims, seed=11)
+av_a = UI.cached_availability(tuple(seasons), recency, home) if use_avail else None
+av_b = UI.cached_availability(tuple(seasons), recency, away) if use_avail else None
+sim = G.simulate_match(ctx, ra, rb, home, away, home=None if neutral else "a", n_sims=n_sims, seed=11,
+                       avail_a=av_a, avail_b=av_b)
 s = G.summarize(sim)
-e = T.expected_goals(r, home, away, home=None if neutral else "a")
+e = T.expected_goals(r, home, away, home=None if neutral else "a", avail_a=av_a, avail_b=av_b)
 
 st.caption(f"Priors from {', '.join(str(x) for x in ctx['seasons'])} · squads and availability from FPL · {n_sims:,} simulations")
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -71,6 +75,8 @@ for team, ros in ((home, ra), (away, rb)):
     if len(doubts):
         bits.append("doubtful: " + ", ".join(f"{n} ({c:.0f}%)" for n, c in zip(doubts["name"], doubts["chance"].fillna(50))))
     notes.append(f"**{team}:** " + ("; ".join(bits) if bits else "no availability flags") + ".")
+if use_avail:
+    notes.append(UI.availability_caption(home, av_a) + "  \n" + UI.availability_caption(away, av_b))
 st.caption("**Availability (FPL feed)** — " + "  \n".join(notes))
 
 # --- score distribution ---------------------------------------------------

@@ -75,8 +75,8 @@ START_PRIOR_N = 3.0          # matches-worth on the start rate (toward the
                              # player's own long-run rate, else his group's)
 LONG_RUN_MIN_MATCHES = 5     # matches before the long-run rate is the prior
 SUB_PRIOR_N = 6.0            # matches-worth on sub-appearance / sub-off rates
-SHARE_PRIOR_MIN = 300.0      # minutes-worth on shot share  (r = 0.92)
-KP_PRIOR_MIN = 400.0         # minutes-worth on key-pass share (r = 0.87)
+SHARE_PRIOR_MIN = 600.0      # minutes-worth on shot share (r = 0.92; 300–900 within noise on the harness)
+KP_PRIOR_MIN = 600.0         # minutes-worth on key-pass share (r = 0.87)
 XGPS_PRIOR_SHOTS = 30.0      # shots-worth on xG per shot (r = 0.64)
 SOT_PRIOR_SHOTS = 90.0       # shots-worth on on-target rate (r = 0.41)
 FIN_PRIOR_XG = 60.0          # xG-worth on finishing (r = 0.11)
@@ -354,7 +354,8 @@ def _fit_group(vals: np.ndarray, evidence: np.ndarray, want: float, cap) -> np.n
     return vals
 
 
-def build_roster(live: dict, team: str, use_fpl: bool = True, lg: dict | None = None) -> pd.DataFrame:
+def build_roster(live: dict, team: str, use_fpl: bool = True, lg: dict | None = None,
+                 ruled_out=None) -> pd.DataFrame:
     """One team's roster: every squad player (FPL) or every player who
     appeared for the club in the priors window (history-only path), with the
     start / minutes / share / quality columns described in the module doc,
@@ -401,7 +402,12 @@ def build_roster(live: dict, team: str, use_fpl: bool = True, lg: dict | None = 
     if not rows:
         raise ValueError(f"No squad for {team}.")
     r = pd.DataFrame(rows)
-    r = fit_eleven(r)
+    if ruled_out:
+        out = r["player_id"].isin({int(x) for x in ruled_out})
+        r.loc[out, ["gate", "p_start", "p_subapp"]] = 0.0
+        r.loc[out, "active"] = False
+        r.loc[out, "status"] = "i"
+    r = fit_eleven(r, team_group_starters(live, team))
     r["exp_minutes"] = expected_minutes(r)
     tv = live["team_vol"].get(team, live["team_vol"]["_LEAGUE_"])["shots"]
     r["exp_shots"] = r["exp_minutes"] / 90.0 * r["shot_share"] * tv
@@ -412,17 +418,54 @@ def build_roster(live: dict, team: str, use_fpl: bool = True, lg: dict | None = 
     return r.reset_index(drop=True)
 
 
-def fit_eleven(r: pd.DataFrame) -> pd.DataFrame:
-    """Fit start probabilities so the goalkeepers sum to one and the outfield
-    to ten; also keep sub-appearance probabilities consistent (about four
-    used subs per match)."""
+LEAGUE_GROUP_STARTERS = {"CB": 2.6, "FB": 2.0, "CM": 2.4, "AM": 0.9, "W": 1.4, "ST": 0.9}
+GROUP_PRIOR_MATCHES = 6.0    # matches-worth of league prior on the team's formation
+
+
+def team_group_starters(live: dict, team: str) -> dict:
+    """The team's typical number of starters per position group (recency-
+    weighted, shrunk toward league) — its formation, so a missing centre-back
+    is replaced by a centre-back rather than by a fifth attacker."""
+    ros = live["rosters"]
+    st = ros[(ros["team"] == team) & (ros["started"] == 1)]
+    if st.empty:
+        return dict(LEAGUE_GROUP_STARTERS)
+    grp = st["player_id"].map(live["groups"]).fillna("CM")
+    per_match = st.assign(grp=grp).groupby(["match_id", "grp"])["w"].agg(["size", "first"]).reset_index()
+    tot_w = float(st.drop_duplicates("match_id")["w"].sum())
+    k = tot_w / (tot_w + GROUP_PRIOR_MATCHES)
+    out = {}
+    for g, prior in LEAGUE_GROUP_STARTERS.items():
+        pm = per_match[per_match["grp"] == g]
+        own = float((pm["size"] * pm["first"]).sum() / tot_w) if tot_w > 0 else prior
+        out[g] = k * own + (1 - k) * prior
+    z = sum(out.values())
+    return {g: v * 10.0 / z for g, v in out.items()}
+
+
+def fit_eleven(r: pd.DataFrame, group_targets: dict | None = None) -> pd.DataFrame:
+    """Fit start probabilities so the goalkeepers sum to one and each outfield
+    group to the team's typical count for it (then the outfield to ten);
+    also keep sub-appearance probabilities consistent (about four used subs
+    per match)."""
     r = r.copy()
     gk = (r["group"] == "GK").values
-    for mask, want in ((gk, 1.0), (~gk, 10.0)):
-        if mask.any():
-            r.loc[mask, "p_start"] = _fit_group(r.loc[mask, "p_start"].values.astype(float),
-                                                r.loc[mask, "evidence"].values.astype(float), want,
-                                                r.loc[mask, "gate"].values.astype(float))
+    targets = group_targets or LEAGUE_GROUP_STARTERS
+    if gk.any():
+        r.loc[gk, "p_start"] = _fit_group(r.loc[gk, "p_start"].values.astype(float),
+                                          r.loc[gk, "evidence"].values.astype(float), 1.0,
+                                          r.loc[gk, "gate"].values.astype(float))
+    present = {g: (r["group"] == g).values for g in targets if ((r["group"] == g) & (r["gate"] > 0)).any()}
+    z = sum(targets[g] for g in present) or 1.0
+    for g, mask in present.items():
+        want = targets[g] * 10.0 / z
+        r.loc[mask, "p_start"] = _fit_group(r.loc[mask, "p_start"].values.astype(float),
+                                            r.loc[mask, "evidence"].values.astype(float), want,
+                                            r.loc[mask, "gate"].values.astype(float))
+    if (~gk).any():
+        r.loc[~gk, "p_start"] = _fit_group(r.loc[~gk, "p_start"].values.astype(float),
+                                           r.loc[~gk, "evidence"].values.astype(float), 10.0,
+                                           r.loc[~gk, "gate"].values.astype(float))
     # subs: P(sub app) × P(not start) should sum to ~4.1 for the outfield
     p_sub = (r["p_subapp"] * (1 - r["p_start"])).values
     tot = float(p_sub[~gk].sum())
@@ -498,3 +541,60 @@ if __name__ == "__main__":
               f"GK {r.loc[r['group'] == 'GK', 'p_start'].sum():.2f}, expected minutes {r['exp_minutes'].sum():.0f}")
         cols = ["name", "group", "status", "p_start", "exp_minutes", "shot_share", "kp_share", "xgps", "sot_rate", "exp_shots", "games"]
         print(r[cols].head(18).to_string(index=False, float_format=lambda x: f"{x:.3f}"))
+
+
+# ---------------------------------------------------------------------------
+# Availability: what the squad on hand produces relative to the typical squad
+# ---------------------------------------------------------------------------
+# The team ratings describe a unit averaged over the window; the squad layer
+# knows who is out. The factor is a physical quantity, not a regression
+# coefficient: expected non-penalty xG per match of the available squad
+# (expected minutes × shot share × xG per shot, summed) over the same sum for
+# the ungated squad. Split into a volume part and a quality part so the
+# engine can move shots and xG per shot separately. AVAIL_COEF scales the
+# log-factor. Fitted on the 2024–26 backtest with HINDSIGHT lineups
+# (`backtest.availability_fit`): the best coefficient is 0 in both seasons
+# (1X2 log-loss 1.0271 → 1.0326 at 1.0; Poisson likelihood flat-to-worse), so
+# the pages show the factor but do not price it unless asked. It is kept at
+# 1.0 here so the toggle shows the factor's full effect.
+
+AVAIL_COEF = 1.0
+AVAIL_CLIP = (0.7, 1.3)
+
+
+def _production(r: pd.DataFrame) -> tuple[float, float]:
+    on = r["exp_minutes"].values / 90.0
+    vol = float((on * r["shot_share"].values).sum())
+    xg = float((on * r["shot_share"].values * r["xgps"].values).sum())
+    return vol, xg
+
+
+def availability_factor(live: dict, team: str, lg: dict | None = None,
+                        roster: pd.DataFrame | None = None, ruled_out=None,
+                        ungated: pd.DataFrame | None = None) -> dict:
+    """Volume and quality multipliers for `team`'s attack given who is
+    available, relative to the ungated squad. `roster` is the gated roster
+    if already built. `ruled_out` (player ids) gates a history-only squad
+    instead of the FPL statuses — the backtest's hindsight mode."""
+    lg = lg or league_rates(live)
+    use_fpl = live.get("squads") is not None and ruled_out is None
+    if use_fpl:
+        gated = roster if roster is not None else build_roster(live, team, True, lg)
+        full_live = dict(live)
+        sq = live["squads"].copy()
+        sq.loc[sq["team"] == team, "status"] = "a"
+        sq.loc[sq["team"] == team, "chance"] = np.nan
+        full_live["squads"] = sq
+        ungated = ungated if ungated is not None else build_roster(full_live, team, True, lg)
+    else:
+        ungated = ungated if ungated is not None else build_roster(live, team, False, lg)
+        gated = build_roster(live, team, False, lg, ruled_out=ruled_out)
+    v1, x1 = _production(gated); v0, x0 = _production(ungated)
+    if v0 <= 0 or x0 <= 0 or v1 <= 0:
+        return dict(volume=1.0, quality=1.0, xg=1.0, missing=[])
+    vol = float(np.clip((v1 / v0) ** AVAIL_COEF, *AVAIL_CLIP))
+    qual = float(np.clip(((x1 / v1) / (x0 / v0)) ** AVAIL_COEF, *AVAIL_CLIP))
+    out_ids = set(ungated.loc[ungated["p_start"] > 0.25, "player_id"]) - set(gated.loc[gated["p_start"] > 0.25, "player_id"])
+    missing = ungated[ungated["player_id"].isin(out_ids)].sort_values("p_start", ascending=False)["name"].tolist()
+    return dict(volume=vol, quality=qual, xg=float(vol * qual), missing=missing,
+                xg_available=float(x1), xg_typical=float(x0))

@@ -177,16 +177,21 @@ def _raw(d: pd.DataFrame, teams: list) -> pd.DataFrame:
 # Matchup
 # ---------------------------------------------------------------------------
 
-def matchup(r: dict, attack: str, defence: str, home: bool | None) -> dict:
+def matchup(r: dict, attack: str, defence: str, home: bool | None,
+            avail: dict | None = None) -> dict:
     """Expected production of one attack against one defence: shots, xG per
     shot, on-target rate, finishing multiplier, penalties, goals.
-    `home` True = the attacking side is at home, False = away, None = neutral."""
+    `home` True = the attacking side is at home, False = away, None = neutral.
+    `avail` is `roster.availability_factor` for the ATTACKING side: volume and
+    quality multipliers for the squad actually available."""
     for t in (attack, defence):
         if t not in r["vol_att"].index:
             raise ValueError(f"No rating for {t!r}.")
     h = 0.0 if home is None else (1.0 if home else -1.0)
-    shots = r["lg_shots"] * np.exp(r["vol_att"][attack] + r["vol_def"][defence] + r["home_vol"] * h)
-    xgps = r["lg_xgps"] * np.exp(r["q_att"][attack] + r["q_def"][defence] + r["home_q"] * h)
+    av_v = float(avail.get("volume", 1.0)) if avail else 1.0
+    av_q = float(avail.get("quality", 1.0)) if avail else 1.0
+    shots = r["lg_shots"] * np.exp(r["vol_att"][attack] + r["vol_def"][defence] + r["home_vol"] * h) * av_v
+    xgps = r["lg_xgps"] * np.exp(r["q_att"][attack] + r["q_def"][defence] + r["home_q"] * h) * av_q
     sot = r["lg_sot"] * np.exp(r["sot_att"][attack] + r["sot_def"][defence] + r["home_sot"] * h)
     fin = r["lg_fin"] * np.exp(r["fin"][attack] + r["gk"][defence])
     pens = r["lg_pen"] * np.exp(r["pen_att"][attack] + r["pen_def"][defence])
@@ -197,7 +202,7 @@ def matchup(r: dict, attack: str, defence: str, home: bool | None) -> dict:
     np_goals = npxg * fin
     goals = float(np.clip(np_goals + pens * PEN_CONVERSION + r["lg_og"], *GOALS_CLIP))
     return dict(
-        attack=attack, defence=defence, home=home,
+        attack=attack, defence=defence, home=home, avail_volume=av_v, avail_quality=av_q,
         shots=shots, xgps=xgps, npxg=float(npxg), sot_rate=sot, sot=float(shots * sot),
         finishing=float(fin), pens=float(pens), og=float(r["lg_og"]),
         np_goals=float(np_goals), goals=goals,
@@ -230,12 +235,13 @@ def outcome_probs(mu_a: float, mu_b: float) -> dict:
                 over25=float(m[(i + j) > 2.5].sum()), btts=float(m[(i > 0) & (j > 0)].sum()))
 
 
-def expected_goals(r: dict, team_a: str, team_b: str, home: str | None = "a") -> dict:
+def expected_goals(r: dict, team_a: str, team_b: str, home: str | None = "a",
+                   avail_a: dict | None = None, avail_b: dict | None = None) -> dict:
     """The deterministic read on a fixture: expected shots and goals each way
     and the analytic 1X2. `home` = "a", "b" or None for a neutral venue."""
     ha = True if home in ("a", team_a) else False if home in ("b", team_b) else None
-    a = matchup(r, team_a, team_b, ha)
-    b = matchup(r, team_b, team_a, (None if ha is None else not ha))
+    a = matchup(r, team_a, team_b, ha, avail_a)
+    b = matchup(r, team_b, team_a, (None if ha is None else not ha), avail_b)
     p = outcome_probs(a["goals"], b["goals"])
     return dict(team_a=team_a, team_b=team_b, home=home,
                 goals_a=a["goals"], goals_b=b["goals"],

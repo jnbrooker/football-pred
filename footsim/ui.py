@@ -45,6 +45,28 @@ def cached_fpl_fixtures() -> pd.DataFrame:
     return D.fpl_fixtures()
 
 
+@st.cache_data(ttl=D.REFRESH_HOURS * 3600, show_spinner=False)
+def cached_availability(seasons: tuple[int, ...], recency, team: str) -> dict:
+    ctx = cached_context(tuple(sorted(seasons)), recency)
+    ros = cached_roster(tuple(sorted(seasons)), recency, team)
+    return RO.availability_factor(ctx["live"], team, ctx["lg"], roster=ros)
+
+
+def availability_toggle(key: str) -> bool:
+    return st.sidebar.toggle(
+        "Price the squad available", value=False, key=f"{key}_avail",
+        help="Scales each attack by the expected shot production of the players available "
+             "(FPL status) over the typical squad. OFF by default: fitted on 2024–26 with hindsight "
+             "lineups, the coefficient is zero — the factor moves attacks by ±8% and does not predict "
+             "goals out of sample. Shown, not priced (ROADMAP §6.13).")
+
+
+def availability_caption(team: str, f: dict) -> str:
+    miss = ", ".join(f.get("missing", [])[:5]) or "nobody of note"
+    return (f"**{team}** attack ×{f.get('xg', 1.0):.2f} for availability "
+            f"(volume ×{f.get('volume', 1.0):.2f}, quality ×{f.get('quality', 1.0):.2f}); out: {miss}.")
+
+
 # ---------------------------------------------------------------------------
 # Sidebar pieces
 # ---------------------------------------------------------------------------
@@ -261,6 +283,7 @@ def stat_page(stat: str) -> None:
         fixture_txt = f"{team} vs {opp_choice}" + (f" ({venue.lower()})" if home is not None else "")
 
     force = start_control(row, key=stat)
+    use_avail = availability_toggle(stat)
     n_sims = st.sidebar.select_slider("Simulations", [5000, 20000, 50000], value=20000, key=f"{stat}_n")
     line = st.sidebar.number_input(f"Line ({cfg['label']})", 0.0, 30.0, float(cfg["default_line"]), 0.5,
                                    key=f"{stat}_line")
@@ -270,7 +293,11 @@ def stat_page(stat: str) -> None:
     status_warning(row)
     st.markdown(role_caption(row, cfg["share"], cfg["what"]))
 
-    mc = P.match_context(ctx, team, opp, home)
+    av = cached_availability(tuple(seasons), recency, team) if use_avail else None
+    av_opp = cached_availability(tuple(seasons), recency, opp) if (use_avail and opp) else None
+    mc = P.match_context(ctx, team, opp, home, avail=av, avail_opp=av_opp)
+    if use_avail:
+        st.caption(availability_caption(team, av) + (("  \n" + availability_caption(opp, av_opp)) if av_opp else ""))
     sim = P.simulate(row, mc, n_sims=n_sims, seed=7, force_start=force)
     x = sim[cfg["array"]]
     if stat == "saves":
