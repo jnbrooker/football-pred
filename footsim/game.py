@@ -312,6 +312,7 @@ def simulate_match(ctx: dict, roster_a: pd.DataFrame, roster_b: pd.DataFrame,
     ha = True if home in ("a", team_a) else False if home in ("b", team_b) else None
     mix_a = T.matchup(r, team_a, team_b, ha, avail_a)
     mix_b = T.matchup(r, team_b, team_a, None if ha is None else not ha, avail_b)
+    mix_a, mix_b = T.apply_context(mix_a, mix_b, r)
     sides = _score_sides(rng, mix_a, mix_b, n)
     lu_a = draw_lineups(rng, roster_a, n)
     lu_b = draw_lineups(rng, roster_b, n)

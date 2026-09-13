@@ -61,6 +61,7 @@ def match_context(ctx: dict, team: str, opp: str | None, home: bool | None,
     else:
         a = T.matchup(r, team, opp, home, avail)
         b = T.matchup(r, opp, team, (None if home is None else not home), avail_opp)
+    a, b = T.apply_context(a, b, r)
     typical = ctx["live"]["team_vol"].get(team, ctx["live"]["team_vol"][lg_team])
     return dict(team=team, opp=opp, home=home, a=a, b=b, ratings=r,
                 team_shots=(a["shots"], TEAM_SHOT_LOGSD),
@@ -151,7 +152,7 @@ def simulate(row: pd.Series, mc: dict, n_sims: int = 20000, seed: int | None = N
     # --- on target and goals: his own rates, moved by the matchup ----------
     sot_mult = D.shrink(a["opp_sot_mult"], def_shrink)
     q_mult = D.shrink(a["opp_q_mult"], def_shrink)
-    fin_mult = D.shrink(a["opp_fin_mult"], def_shrink)
+    fin_mult = D.shrink(a["opp_fin_mult"], def_shrink) * a.get("context_mult", 1.0)
     p_sot = float(np.clip(row["sot_rate"] * sot_mult, 0.03, 0.9))
     p_goal = float(np.clip(row["xgps"] * q_mult * row["finishing"] * fin_mult, 0.005, 0.6))
     sot = rng.binomial(shots, p_sot)

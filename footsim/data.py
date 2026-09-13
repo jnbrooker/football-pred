@@ -547,7 +547,42 @@ def load_squads() -> pd.DataFrame:
         sq["team_played"] = sq["team"].map(played).fillna(0).astype(int)
     except Exception:
         sq["team_played"] = 0
+    record_availability(sq)
     return sq
+
+
+# ---------------------------------------------------------------------------
+# Availability history: the FPL status feed cannot be replayed, so record it.
+# One snapshot per calendar day (first load of the day), appended to
+# cache/availability.parquet: date, gameweek next, fpl_code, team, status,
+# chance, news. Enough to fit a PRE-MATCH availability index once a season
+# of snapshots exists (roadmap §7).
+# ---------------------------------------------------------------------------
+
+AVAILABILITY_LOG = CACHE / "availability.parquet"
+
+
+def record_availability(sq: pd.DataFrame) -> bool:
+    """Append today's squad statuses to the log if today is not there yet."""
+    try:
+        today = pd.Timestamp(_dt.date.today())
+        cur, nxt = fpl_current_gw()
+        snap = sq[["fpl_code", "fpl_id", "team", "name", "position", "status", "chance", "news", "price"]].copy()
+        snap.insert(0, "date", today)
+        snap.insert(1, "gw_next", nxt)
+        if AVAILABILITY_LOG.exists():
+            old = pd.read_parquet(AVAILABILITY_LOG)
+            if (old["date"] == today).any():
+                return False
+            snap = pd.concat([old, snap], ignore_index=True)
+        snap.to_parquet(AVAILABILITY_LOG, index=False)
+        return True
+    except Exception:
+        return False
+
+
+def load_availability_log() -> pd.DataFrame:
+    return pd.read_parquet(AVAILABILITY_LOG) if AVAILABILITY_LOG.exists() else pd.DataFrame()
 
 
 @ttl_cache(maxsize=4)
@@ -856,6 +891,12 @@ def american(p: float) -> str:
 
 if __name__ == "__main__":
     import sys
+    if sys.argv[1:2] == ["availability"]:
+        sq = load_squads()
+        log = load_availability_log()
+        print(f"availability log: {log['date'].nunique() if len(log) else 0} days, "
+              f"{len(log)} rows; today {'recorded' if len(log) and (log['date'] == pd.Timestamp(_dt.date.today())).any() else 'not recorded'}")
+        sys.exit(0)
     seasons = tuple(int(s) for s in sys.argv[1:]) or (2024, 2025, 2026)
     for s in seasons:
         n = sync_season(s, progress=lambda i, n: print(f"\r  {s}: {i}/{n}", end=""))

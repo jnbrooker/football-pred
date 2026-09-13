@@ -395,7 +395,48 @@ results: first half xGD −0.57 per match but GD +0.11 and 29 points (the 7th
 luckiest of 80 team-seasons), second half GD −0.42 — right on their xGD.
 The prior called them a typical promoted side on xG, which they were.
 
-### 6.16 Data traps, for the next person
+### 6.16 Squad production across transfers — tested, not priced
+At each season start (2023–25, 60 team-seasons), the XI's production at
+its players' *previous-season* per-90 rates (whichever club) was regressed
+alongside the previous-season unit rating against the team's xG over rounds
+5–38. The unit rating carries the signal (t = 3.5); squad production adds
+nothing (t = 1.0, R² 0.482 → 0.491, correlation between the two 0.81). For
+promoted sides most of the XI has no top-flight history anyway (Sunderland
+2025: 15% known), which is what §6.15 covers. Rest days between league
+matches were also tested on the residuals: nothing on margins (t < 1), and
+the "long rest" bin is really the European-midweek proxy — not usable
+without cup and European fixtures.
+
+### 6.17 Where the extremes really go: conversion follows the match context
+Pooled over 1 900 out-of-sample matches (2021–25), expected **xG** is
+properly spread (actual on expected: slope 0.90 per side, 0.94 on the xG
+margin) but **goals** are not (1.06 per side, 1.13 on the goal margin).
+Binning by the opponent's expected xG: a side expected to concede 0.9 xG
+converts its own chances at 1.03 of its xG-based expectation, a side
+expected to concede 2.2 at 0.89. In a mismatch the stronger side
+over-converts and the weaker under-converts relative to xG — elite
+finishing and keeping that Understat's xG does not carry, and trailing
+sides' chances being worse than their xG. Poisson regression of goals on
+the offset of expected goals gives −0.171 (t = −4.2) on log(opponent's
+expected xG / league); the dominance form is positive in every season.
+
+`teams.apply_context` scales each side's conversion by (opponent xG /
+league)^β and is applied to both sides of every matchup (analytic, engine,
+single-player pages). Grid on 2022–25:
+
+| β | pooled log-loss | spread vs market (2025) | margin slope |
+|---|---|---|---|
+| 0 | 0.9780 | 0.69 | 1.06 |
+| −0.08 | 0.9761 | 0.75 | 0.99 |
+| **−0.12** (set) | 0.9755 | 0.77 | 0.95 |
+| −0.171 | 0.9750 | 0.81 | 0.91 |
+
+This is the answer to "it underweights extremes": it did, by ~13% on goal
+margins, and the reason was conversion, not the ratings. The 2025/26 spread
+against the market went 0.68 → 0.77 (2024/25: 0.76 → 0.85) with log-loss
+improving in every season.
+
+### 6.18 Data traps, for the next person
 - Understat serves data from `getLeagueData/{league}/{season}` and
   `getMatchData/{id}` (gzip, needs `X-Requested-With`), not the page HTML.
 - Pinnacle closing prices are missing for ~45% of 2025/26 rows on
@@ -407,19 +448,21 @@ The prior called them a typical promoted side on xG, which they were.
 
 ## 7. Next (ranked)
 
-1. **Player-level team strength across transfers.** The market prices a
-   summer's signings before a ball is kicked; the unit ratings cannot. The
-   squad layer already carries every player's per-90 rates from his old
-   club — a squad-production prior for the *season start* (and for promoted
-   sides' signings) is the largest unexploited information source, and it
-   is testable: does squad production at round 1 predict the residual of
-   the previous-season unit rating over the coming season?
-2. **Home advantage by strength gap** (§6.14): needs more seasons; pool
-   2018–26 from Understat (the loader already supports it).
-3. **Record the FPL availability feed weekly** so a real pre-match
-   availability index can be fitted (§6.13 used hindsight lineups).
-4. **Rest days / European fixtures / manager changes** — small, known
-   effects; the FPL kickoff times give rest days for free.
+1. ~~Player-level team strength across transfers~~ — tested, nothing
+   beyond the unit rating (§6.16).
+2. ~~Home advantage by strength gap~~ — pooled 2021–25: the tail asymmetry
+   was conversion, not home advantage (§6.17); priced.
+3. ~~Record the FPL availability feed~~ — `data.record_availability` logs
+   every squad's status once a day whenever the squads load
+   (`cache/availability.parquet`; `python -m footsim.data availability`).
+   Fit a pre-match availability index once a season of snapshots exists.
+4. ~~Rest days~~ — tested, confounded without cup / European fixtures
+   (§6.16). Needs a fixture source for those competitions.
+5. **Elite finishing / keeping as a team trait.** §6.17 prices conversion
+   by match context; a per-team finishing rating is still shrunk to league
+   (FIN_PRIOR_XG = 80). With eight seasons now cached, test whether a
+   multi-season finishing rating (shrunk over ~150 xG) adds to it.
+6. **Prop evaluation** (Odds API) — last, by design.
 3. **Referee and opponent effects on cards**; fouls drawn.
 4. **Prop evaluation** — Odds API `soccer_epl` markets, frozen projection,
    settled from Understat. Last, by design.

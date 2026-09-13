@@ -45,6 +45,7 @@ def engine_moments(season: int, n_sims: int = 400, seed: int = 1,
     for _, m in fx.iterrows():
         mix_a = T.matchup(r, m["home"], m["away"], True)
         mix_b = T.matchup(r, m["away"], m["home"], False)
+        mix_a, mix_b = T.apply_context(mix_a, mix_b, r)
         s = G._score_sides(rng, mix_a, mix_b, n_sims)
         rows.append(pd.DataFrame(dict(
             match_id=m["match_id"], sim=np.arange(n_sims),

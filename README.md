@@ -93,13 +93,15 @@ closing prices with the overround removed on the same matches:
 
 | season | model | closing market | base rates |
 |---|---|---|---|
-| 2024/25 | 0.974 | 0.968 | 1.07 |
-| 2025/26 | 1.027 | 1.014 | 1.07 |
+| 2022/23 | 0.975 | 0.962 | 1.07 |
+| 2023/24 | 0.929 | 0.900 | 1.07 |
+| 2024/25 | 0.972 | 0.966 | 1.07 |
+| 2025/26 | 1.026 | 1.014 | 1.07 |
 
-The model captures ~85–90% of the market's information over base rates and
-its win probabilities are calibrated (slope 1.04 / 0.99). Its probabilities
-have ~0.7× the market's spread: calibrated for what it knows, and the market
-knows more (`ROADMAP.md` §6.12).
+The model captures ~85–90% of the market's information over base rates;
+its goal-difference calibration slope is 0.95 and its probabilities have
+~0.8× the market's spread — the rest is information a shot model does not
+have (`ROADMAP.md` §6.12, §6.17).
 
 **Player models** (2025/26, 36 000 player-matches, conditional on the
 player's actual role, fitted before each date) vs a trailing weighted

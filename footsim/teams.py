@@ -77,6 +77,16 @@ SOT_CLIP = (0.20, 0.55)
 PEN_CONVERSION = 0.855
 MAX_GOALS = 10
 
+# Match context and conversion (roadmap §6.17). Out of sample over 2021–25,
+# expected xG is properly spread (actual on expected, slope 0.90) but goals
+# are not (1.06 per side, 1.13 on margins): a side expected to concede a lot
+# converts its own chances at 0.89 of its xG-based expectation, a side
+# expected to concede little at 1.03. Fitted by Poisson regression of goals
+# on the offset of expected goals: coefficient −0.171 (t = −4.2, n = 3 800)
+# on log(opponent's expected xG / league). Applied to both sides of a
+# matchup by `apply_context`.
+FIN_CONTEXT_BETA = -0.12     # pooled fit −0.171; −0.12 keeps the margin slope at 0.95 (see ROADMAP §6.17)
+
 
 def _wsum_by(keys, vals, w):
     return (vals * w).groupby(keys).sum()
@@ -265,6 +275,25 @@ def matchup(r: dict, attack: str, defence: str, home: bool | None,
     )
 
 
+def apply_context(a: dict, b: dict, r: dict, beta: float | None = None) -> tuple[dict, dict]:
+    """Scale each side's conversion by the match context: the more the
+    opponent is expected to create, the fewer goals a side scores per xG of
+    its own (see FIN_CONTEXT_BETA). Returns adjusted copies of both matchups."""
+    lg = r["lg_shots"] * r["lg_xgps"]
+    beta = FIN_CONTEXT_BETA if beta is None else beta
+    out = []
+    for me, other in ((a, b), (b, a)):
+        m = dict(me)
+        k = float(np.clip((other["npxg"] / max(lg, 1e-6)) ** beta, 0.7, 1.4))
+        m["context_mult"] = k
+        m["finishing"] = me["finishing"] * k
+        m["np_goals"] = me["np_goals"] * k
+        m["goals"] = float(np.clip(m["np_goals"] + me["pens"] * PEN_CONVERSION + me["og"], *GOALS_CLIP))
+        m["p_goal"] = float(np.clip(m["np_goals"] / max(me["shots"], 1e-6), 0.01, 0.5))
+        out.append(m)
+    return out[0], out[1]
+
+
 def score_matrix(mu_a: float, mu_b: float, max_goals: int = MAX_GOALS) -> np.ndarray:
     """P(score = i–j) under independent Poissons."""
     pa = poisson.pmf(np.arange(max_goals + 1), mu_a)
@@ -287,6 +316,7 @@ def expected_goals(r: dict, team_a: str, team_b: str, home: str | None = "a",
     ha = True if home in ("a", team_a) else False if home in ("b", team_b) else None
     a = matchup(r, team_a, team_b, ha, avail_a)
     b = matchup(r, team_b, team_a, (None if ha is None else not ha), avail_b)
+    a, b = apply_context(a, b, r)
     p = outcome_probs(a["goals"], b["goals"])
     return dict(team_a=team_a, team_b=team_b, home=home,
                 goals_a=a["goals"], goals_b=b["goals"],
