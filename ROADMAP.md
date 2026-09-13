@@ -364,7 +364,38 @@ ratings already average over the periods without the player, and shot
 share is not the same as chance creation (a missing striker's shots go to
 teammates at lower quality than the quality ratio captures).
 
-### 6.14 Data traps, for the next person
+### 6.14 Where the extremes go — a closer look
+Binned out of sample (2024–26), the tails are *asymmetric*, not uniformly
+compressed: away favourites do better than predicted (predicted margin
+−1.35 → actual −1.82; −0.70 → −0.93, ~1.3σ each) while big home favourites
+do slightly worse (+1.39 → +1.09). That is the signature of a home advantage
+that is too generous to weak home sides, but the in-sample test of home
+advantage by strength gap is confounded by regression to the mean, and 757
+matches cannot fit a gap-dependent home term. Left open. The solver is
+converged (40 vs 400 iterations agree to 1e-12) and the in-sample fit of
+actual xG on expected xG has slope 0.96, so the compression is not numerical.
+
+### 6.15 Promoted sides — attack prior priced, defence not
+A team with no top-flight matches the season before started at league
+average (and with no data at all was *unrated*, so round-one fixtures were
+skipped by the backtest). Every promoted class since 2023 has lacked
+attacking quality — xG for 0.65–0.83× league, from fewer shots (log −0.20)
+of lower quality (−0.11), spread across teams only 0.05–0.07 — so the
+attack prior is now worth 8 matches. Scored on the promoted side's own xG
+in rounds 1–8 it helps in all three classes (bias −0.01 → +0.01 in 2024,
+−0.17 → −0.09 in 2025, −0.11 → +0.11 in 2026 on four matches).
+
+The defence half does not survive: the 2023–24 classes conceded 1.2–1.4×
+league, but Sunderland / Leeds 2025 conceded 1.04× / 0.97× and Coventry /
+Hull 2026 0.89× / 0.87× so far, and the 1X2 log-loss flips with it (2024
+−0.004, 2025 +0.004). Not priced.
+
+Sunderland 2025/26 is the cautionary tale for scoring an xG model on
+results: first half xGD −0.57 per match but GD +0.11 and 29 points (the 7th
+luckiest of 80 team-seasons), second half GD −0.42 — right on their xGD.
+The prior called them a typical promoted side on xG, which they were.
+
+### 6.16 Data traps, for the next person
 - Understat serves data from `getLeagueData/{league}/{season}` and
   `getMatchData/{id}` (gzip, needs `X-Requested-With`), not the page HTML.
 - Pinnacle closing prices are missing for ~45% of 2025/26 rows on
@@ -376,11 +407,19 @@ teammates at lower quality than the quality ratio captures).
 
 ## 7. Next (ranked)
 
-1. **Record the FPL availability feed weekly** so a real pre-match
-   availability index can be fitted (§6.13 used hindsight lineups and found
-   nothing; a pre-match feed may differ because it is what the market sees).
-2. **Player-level team strength**: rate the XI, not the unit — the natural
-   next step if availability is to matter.
+1. **Player-level team strength across transfers.** The market prices a
+   summer's signings before a ball is kicked; the unit ratings cannot. The
+   squad layer already carries every player's per-90 rates from his old
+   club — a squad-production prior for the *season start* (and for promoted
+   sides' signings) is the largest unexploited information source, and it
+   is testable: does squad production at round 1 predict the residual of
+   the previous-season unit rating over the coming season?
+2. **Home advantage by strength gap** (§6.14): needs more seasons; pool
+   2018–26 from Understat (the loader already supports it).
+3. **Record the FPL availability feed weekly** so a real pre-match
+   availability index can be fitted (§6.13 used hindsight lineups).
+4. **Rest days / European fixtures / manager changes** — small, known
+   effects; the FPL kickoff times give rest days for free.
 3. **Referee and opponent effects on cards**; fouls drawn.
 4. **Prop evaluation** — Odds API `soccer_epl` markets, frozen projection,
    settled from Understat. Last, by design.

@@ -673,11 +673,12 @@ def load_odds(seasons: tuple[int, ...]) -> pd.DataFrame:
         # Pinnacle closing is missing for part of some seasons; the market
         # average closing price stands in where it is
         for k in ("h", "d", "a"):
-            if f"ps_{k}" in out.columns and f"avg_{k}" in out.columns:
-                out[f"ps_{k}"] = out[f"ps_{k}"].fillna(out[f"avg_{k}"])
-        if "over25" in out.columns and "avg_over25" in out.columns:
-            out["over25"] = out["over25"].fillna(out["avg_over25"])
-            out["under25"] = out["under25"].fillna(out["avg_under25"])
+            if f"avg_{k}" in out.columns:
+                out[f"ps_{k}"] = (out[f"ps_{k}"].fillna(out[f"avg_{k}"]) if f"ps_{k}" in out.columns
+                                  else out[f"avg_{k}"])
+        if "avg_over25" in out.columns:
+            out["over25"] = out["over25"].fillna(out["avg_over25"]) if "over25" in out.columns else out["avg_over25"]
+            out["under25"] = out["under25"].fillna(out["avg_under25"]) if "under25" in out.columns else out["avg_under25"]
         frames.append(out)
     if not frames:
         return pd.DataFrame()

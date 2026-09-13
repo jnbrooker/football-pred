@@ -88,11 +88,12 @@ def team_backtest(score_seasons, n_prior: int = 2, recency: D.Recency = D.RECENC
         if prior["match_id"].nunique() < 60:
             continue
         prior = D.game_weights(prior, "team", recency)
+        day = fx[fx["date"].dt.normalize() == d]
         try:
-            r = T.team_ratings(prior)
+            r = T.team_ratings(prior, season=int(day["season"].iloc[0]),
+                               extra_teams=set(day["home"]) | set(day["away"]))
         except ValueError:
             continue
-        day = fx[fx["date"].dt.normalize() == d]
         for _, m in day.iterrows():
             if m["home"] not in r["teams"] or m["away"] not in r["teams"]:
                 continue
@@ -101,6 +102,7 @@ def team_backtest(score_seasons, n_prior: int = 2, recency: D.Recency = D.RECENC
                 season=int(m["season"]), round=int(m["round"]), date=m["date"], match_id=int(m["match_id"]),
                 home=m["home"], away=m["away"], hg=float(m["home_goals"]), ag=float(m["away_goals"]),
                 exp_hg=e["goals_a"], exp_ag=e["goals_b"], exp_shots_h=e["shots_a"], exp_shots_a=e["shots_b"],
+                exp_xg_h=e["a"]["npxg"], exp_xg_a=e["b"]["npxg"],
                 p_home=e["win_a"], p_draw=e["draw"], p_away=e["win_b"], p_over25=e["over25"],
             ))
         if progress:
@@ -115,6 +117,9 @@ def team_backtest(score_seasons, n_prior: int = 2, recency: D.Recency = D.RECENC
     tmr = tm_all.set_index(["match_id", "team"])["shots"]
     bt["shots_h"] = [tmr.get((mid, h), np.nan) for mid, h in zip(bt["match_id"], bt["home"])]
     bt["shots_a"] = [tmr.get((mid, a), np.nan) for mid, a in zip(bt["match_id"], bt["away"])]
+    tmx = tm_all.set_index(["match_id", "team"])["npxg"]
+    bt["xg_h"] = [tmx.get((mid, h), np.nan) for mid, h in zip(bt["match_id"], bt["home"])]
+    bt["xg_a"] = [tmx.get((mid, a), np.nan) for mid, a in zip(bt["match_id"], bt["away"])]
     # closing odds on the same matches
     if not odds.empty and "ps_h" in odds.columns:
         o = odds.copy()

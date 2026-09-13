@@ -53,6 +53,21 @@ PEN_PRIOR_N = 30.0         # penalties won / conceded per match
 SOLVE_ITERS = 40
 SOLVE_DAMPING = 0.6
 
+# Promoted sides (roadmap §6.15). A team with no top-flight matches in the
+# previous season is not an average side. Every promoted class since 2023
+# has lacked ATTACKING quality — 0.65–0.83× league xG, from fewer shots
+# (log −0.20) of lower quality (−0.11), with a spread of only 0.05–0.07
+# across teams — so the attack prior is worth PROMOTED_PRIOR_N matches
+# rather than the usual one. Their DEFENCE is not predictable from promotion:
+# the 2023–24 classes conceded 1.2–1.4× league, Sunderland / Leeds 2025 and
+# Coventry / Hull 2026 conceded at or below average, and the backtest flips
+# sign with it — so the defence prior is zero (shown in the log, not priced).
+# The prior is also what a team with NO data at all is rated on (round one),
+# instead of being unrated.
+PROMOTED_PRIOR = dict(vol_att=-0.204, q_att=-0.114, sot_att=-0.041,
+                      vol_def=0.0, q_def=0.0, sot_def=0.0, fin=0.0, gk=0.0, pen_att=0.0, pen_def=0.0)
+PROMOTED_PRIOR_N = 8.0
+
 # Guard rails on a single matchup.
 SHOTS_CLIP = (4.0, 30.0)
 XGPS_CLIP = (0.05, 0.25)
@@ -69,34 +84,42 @@ def _wsum_by(keys, vals, w):
 
 def _ipf(tm: pd.DataFrame, y: str, expo: str, teams: list, prior_n: float,
          lg_rate: float, home_col: str = "home", iters: int = SOLVE_ITERS,
-         fit_home: bool = True, prior_expo: float | None = None) -> tuple[pd.Series, pd.Series, float]:
+         fit_home: bool = True, prior_expo: float | None = None,
+         prior_att: pd.Series | None = None, prior_def: pd.Series | None = None,
+         prior_n_team: pd.Series | None = None) -> tuple[pd.Series, pd.Series, float]:
     """Iterative proportional fitting of  y ~ expo × exp(att_i + def_j + home).
 
     `y` is the count (or sum) column, `expo` the exposure column (1 for
     per-match rates, shots for per-shot rates). Returns (att, def, home) on
     the log scale; att and def are each centred on zero. `prior_n` matches-
-    worth of league-average pseudo-data shrinks every rating; `prior_expo` is
-    the exposure of one such match (defaults to the mean exposure).
+    worth of pseudo-data shrinks every rating toward `prior_att` / `prior_def`
+    (log scale, default 0 = league average); `prior_n_team` overrides the
+    strength per team (promoted sides). `prior_expo` is the exposure of one
+    pseudo-match (defaults to the mean exposure).
     """
     w = tm["w"].astype(float)
     yv = tm[y].astype(float)
     ex = tm[expo].astype(float) if expo != "_one_" else pd.Series(1.0, index=tm.index)
     pe = float(prior_expo if prior_expo is not None else D.wmean(ex, w))
-    pseudo = prior_n * pe * lg_rate            # pseudo-count of y at league rate
+    pn = (prior_n_team.reindex(teams).fillna(prior_n) if prior_n_team is not None
+          else pd.Series(prior_n, index=teams))
+    pseudo = pn * pe * lg_rate                 # pseudo-count of y per team
+    pa = prior_att.reindex(teams).fillna(0.0) if prior_att is not None else pd.Series(0.0, index=teams)
+    pdf = prior_def.reindex(teams).fillna(0.0) if prior_def is not None else pd.Series(0.0, index=teams)
     att = pd.Series(0.0, index=teams)
     dfn = pd.Series(0.0, index=teams)
     home = 0.0
     hv = tm[home_col].astype(float)
     for _ in range(int(iters)):
         base = ex * lg_rate * np.exp(dfn.reindex(tm["opp"]).values + home * hv)
-        num = _wsum_by(tm["team"], yv, w).reindex(teams).fillna(0.0) + pseudo
+        num = _wsum_by(tm["team"], yv, w).reindex(teams).fillna(0.0) + pseudo * np.exp(pa)
         den = _wsum_by(tm["team"], base, w).reindex(teams).fillna(0.0) + pseudo
         new_att = np.log(num / den)
         new_att -= new_att.mean()
         att = SOLVE_DAMPING * new_att + (1 - SOLVE_DAMPING) * att
 
         base = ex * lg_rate * np.exp(att.reindex(tm["team"]).values + home * hv)
-        num = _wsum_by(tm["opp"], yv, w).reindex(teams).fillna(0.0) + pseudo
+        num = _wsum_by(tm["opp"], yv, w).reindex(teams).fillna(0.0) + pseudo * np.exp(pdf)
         den = _wsum_by(tm["opp"], base, w).reindex(teams).fillna(0.0) + pseudo
         new_def = np.log(num / den)
         new_def -= new_def.mean()
@@ -112,19 +135,38 @@ def _ipf(tm: pd.DataFrame, y: str, expo: str, teams: list, prior_n: float,
     return att, dfn, float(home)
 
 
-def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS) -> dict:
-    """Opponent-adjusted ratings from the team-match table (`data.load_team_matches`)."""
+def promoted_teams(tm: pd.DataFrame, season: int, extra_teams=()) -> set:
+    """Teams playing `season` (in the data or in `extra_teams`) with no
+    matches in the season before it — promoted, or back after an absence."""
+    prev = set(tm.loc[tm["season"] == season - 1, "team"])
+    cur = set(tm.loc[tm["season"] == season, "team"]) | set(extra_teams)
+    return {t for t in cur if t not in prev}
+
+
+def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS, season: int | None = None,
+                 extra_teams=()) -> dict:
+    """Opponent-adjusted ratings from the team-match table (`data.load_team_matches`).
+
+    `season` is the season being predicted (default: the latest in the data)
+    and `extra_teams` any teams in its fixtures that have no matches yet —
+    both get the promoted prior if they have no matches the season before."""
     if tm is None or tm.empty:
         raise ValueError("No team-match data — the Understat cache is empty.")
     d = tm.copy()
+    season = int(season) if season is not None else int(d["season"].max())
+    promoted = promoted_teams(d, season, extra_teams)
     d["w"] = d["w"].astype(float) if "w" in d.columns else 1.0
     d["np_shots"] = d["shots"] - d["pens"]
     d["np_goals"] = (d["goals_from_shots"] - d["pen_goals"]).clip(lower=0)
     d["np_sot"] = d["sot"] - d["pens"]                    # penalties are (nearly) always on target
     d["np_sot"] = d["np_sot"].clip(lower=0)
     d["one"] = 1.0
-    teams = sorted(set(d["team"]) | set(d["opp"]))
+    teams = sorted(set(d["team"]) | set(d["opp"]) | set(extra_teams))
     W = d["w"]
+    pn = pd.Series({t: PROMOTED_PRIOR_N for t in promoted}, dtype=float)
+
+    def prior(key):
+        return pd.Series({t: PROMOTED_PRIOR[key] for t in promoted}, dtype=float)
 
     lg_shots = D.wmean(d["np_shots"], W)                   # non-penalty shots per team-match
     lg_xgps = float((d["npxg"] * W).sum() / (d["np_shots"] * W).sum())
@@ -133,13 +175,16 @@ def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS) -> dict:
     lg_pen = D.wmean(d["pens"], W)
     lg_og = D.wmean(d["og_scored"], W)
 
-    vol_att, vol_def, home_vol = _ipf(d, "np_shots", "one", teams, VOL_PRIOR_N, lg_shots, iters=iters)
+    vol_att, vol_def, home_vol = _ipf(d, "np_shots", "one", teams, VOL_PRIOR_N, lg_shots, iters=iters,
+                                      prior_att=prior("vol_att"), prior_def=prior("vol_def"), prior_n_team=pn)
     q_att, q_def, home_q = _ipf(d, "npxg", "np_shots", teams, QUAL_PRIOR_N, lg_xgps, iters=iters,
-                                prior_expo=lg_shots)
+                                prior_expo=lg_shots,
+                                prior_att=prior("q_att"), prior_def=prior("q_def"), prior_n_team=pn)
     fin, gk, _ = _ipf(d, "np_goals", "npxg", teams, FIN_PRIOR_XG / max(lg_xgps * lg_shots, 1e-6),
                       lg_fin, iters=iters, fit_home=False, prior_expo=lg_xgps * lg_shots)
     sot_att, sot_def, home_sot = _ipf(d, "np_sot", "np_shots", teams, SOT_PRIOR_N, lg_sot, iters=iters,
-                                      prior_expo=lg_shots)
+                                      prior_expo=lg_shots,
+                                      prior_att=prior("sot_att"), prior_def=prior("sot_def"), prior_n_team=pn)
     pen_att, pen_def, _ = _ipf(d, "pens", "one", teams, PEN_PRIOR_N, max(lg_pen, 1e-4), iters=iters,
                                fit_home=False)
 
@@ -156,7 +201,7 @@ def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS) -> dict:
         lg_pen=lg_pen, lg_og=lg_og,
         lg_goals=float(D.wmean(d["goals"], W)),
         raw=raw, matches_w=matches, n_matches=int(len(d) // 2),
-        seasons=sorted(d["season"].unique().tolist()),
+        seasons=sorted(d["season"].unique().tolist()), season=season, promoted=sorted(promoted),
     )
 
 
@@ -170,7 +215,7 @@ def _raw(d: pd.DataFrame, teams: list) -> pd.DataFrame:
         "shots_for": s["ws"] / s["w"], "shots_against": s["wsa"] / s["w"],
         "xg_for": s["wx"] / s["w"], "xg_against": s["wxa"] / s["w"],
         "goals_for": s["wg"] / s["w"], "goals_against": s["wga"] / s["w"],
-    }).reindex(teams)
+    }).reindex(teams).fillna(np.nan)
 
 
 # ---------------------------------------------------------------------------
