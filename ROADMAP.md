@@ -458,11 +458,14 @@ improving in every season.
    Fit a pre-match availability index once a season of snapshots exists.
 4. ~~Rest days~~ — tested, confounded without cup / European fixtures
    (§6.16). Needs a fixture source for those competitions.
-5. **Elite finishing / keeping as a team trait.** §6.17 prices conversion
-   by match context; a per-team finishing rating is still shrunk to league
-   (FIN_PRIOR_XG = 80). With eight seasons now cached, test whether a
-   multi-season finishing rating (shrunk over ~150 xG) adds to it.
-6. **Prop evaluation** (Odds API) — last, by design.
+5. ~~Elite finishing / keeping as a team trait~~ — tested on the pooled
+   2021–25 residuals with three-season finishing and keeping ratings
+   (shrunk over 60 / 150 / 300 xG): finishing t = 1.6–1.8, keeping 1.2–1.3,
+   effect size ±2% at most on top of §6.17. Right sign, not priced.
+6. **A fixture source for cups and European matches**, which would unlock
+   rest days / congestion (§6.16) and is the one variable the market
+   visibly prices that this suite cannot see.
+7. **Prop evaluation** (Odds API) — last, by design.
 3. **Referee and opponent effects on cards**; fouls drawn.
 4. **Prop evaluation** — Odds API `soccer_epl` markets, frozen projection,
    settled from Understat. Last, by design.
