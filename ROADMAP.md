@@ -157,6 +157,15 @@ defensive contribution (per-90 rate × minutes, NB; FPL 2025–26 rule), and
 bonus approximated from a fitted BPS-to-bonus map on the simulated line.
 Floor / ceiling / P(≥ N) per player, breakdown by component.
 
+### 3.9b FPL planning (`footsim/planner.py`, page 9) — DONE
+Exact integer programmes (HiGHS): the best 15 under the rules for one
+gameweek with XI, bench and captain; the best fixed 15 over a horizon of
+gameweeks with the XI and captain re-chosen each week; and the transfer
+path from a real team (FPL team-ID import, or picked by hand) — one free
+transfer a week banked to five, free ones used first, −4 per extra,
+budget = squad value + bank, later weeks discounted. Chips and the
+half-profit selling rule are not modelled.
+
 ### 3.10 Backtest (`footsim/backtest.py`, page 10)
 Rolling out-of-sample: for each gameweek, fit everything on matches before it.
 Team layer: 1X2 log-loss, RPS, goal-difference RMSE, total-goals RMSE, vs

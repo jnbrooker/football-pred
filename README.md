@@ -26,7 +26,7 @@ every constant that could be fitted was fitted on those residuals.
 | Cards | yellows per 90, regressed toward the position |
 | Team Strength | attack and defence solved from shots, xG per shot and finishing; home advantage |
 | Match Simulation | a fixture: score distribution, 1X2, goal lines, both box scores |
-| Fantasy Projections | the gameweek's slate scored on FPL rules per simulation; floor, ceiling, breakdown |
+| Fantasy Projections | the gameweek's slate scored on FPL rules per simulation; floor, ceiling, breakdown; the best £100m squad with captain; the best fixed squad for the weeks ahead; a transfer planner from your own team (FPL team-ID import) under the free-transfer / hit rules |
 | Backtest | every model scored date by date out of sample, vs the closing market and a trailing average |
 
 Pages 1–6 pick players from the **live FPL squad** with availability tags

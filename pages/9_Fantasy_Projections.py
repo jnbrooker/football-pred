@@ -121,3 +121,99 @@ if best is not None:
                  hide_index=True, **UI.WIDE, height=560)
     st.caption("Start = modelled probability of starting; a player flagged doubtful is priced at his chance of playing. "
                "Prices are FPL's current values. Bench order is by expected points.")
+
+# --- season planner: the weeks ahead --------------------------------------------
+from footsim import planner as PL
+
+st.subheader("Season planner")
+st.write("Projections for the gameweeks ahead from the same match engine, then two exact plans: the best **fixed** "
+         "15 for the whole horizon (its XI and captain can change each week), and the best **transfer path** from "
+         "the team you actually have — one free transfer a week banked to five, −4 for every extra, budget from your "
+         "squad value plus bank. Later weeks are discounted because the engine's view of them is less certain.")
+
+
+@st.cache_data(ttl=D.REFRESH_HOURS * 3600, show_spinner="Simulating the gameweeks ahead…")
+def horizon(seasons, recency, gws: tuple, rules_key: str, rules: dict, n_sims: int):
+    ctx = UI.cached_context(tuple(sorted(seasons)), recency)
+    return PL.horizon_projections(ctx, list(gws), rules, n_sims=n_sims)
+
+
+p1, p2, p3, p4 = st.columns(4)
+n_ahead = p1.slider("Gameweeks ahead", 2, 8, 5)
+h_sims = p2.select_slider("Simulations per match (horizon)", [1000, 2000, 4000], value=2000)
+discount = p3.slider("Weekly discount", 0.7, 1.0, 0.9, 0.05, help="Weight on next week's points relative to this week's.")
+h_obj = p4.selectbox("Maximise", ["Proj", "Ceiling", "Floor"], index=0, key="h_obj")
+gws_ahead = tuple(g for g in gws if g >= int(gw))[:n_ahead]
+H = horizon(tuple(seasons), recency, gws_ahead, preset, rules, h_sims)
+if H.empty:
+    st.warning("No projections for the gameweeks ahead."); st.stop()
+st.caption(f"Horizon: GW{gws_ahead[0]}–GW{gws_ahead[-1]} · {H['player_id'].nunique()} players · "
+           f"{h_sims:,} simulations per match. Blank gameweeks count zero; double gameweeks are summed.")
+
+tab_fixed, tab_plan = st.tabs(["Best fixed squad for the horizon", "Transfer plan from your team"])
+with tab_fixed:
+    f1, f2 = st.columns([1, 3])
+    h_budget = f1.number_input("Budget (£m)", 50.0, 150.0, 100.0, 0.5, key="h_budget")
+    h_lock = f2.multiselect("Must include", all_labels, key="h_lock")
+    try:
+        best = PL.best_season_squad(H, list(gws_ahead), budget=h_budget, discount=discount, objective=h_obj,
+                                    locked=[lab2id[l] for l in h_lock])
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Expected XI points over the horizon", f"{best['total']:.0f}", help="Captain counted twice, no discount")
+        m2.metric("Cost", f"£{best['weeks'][0]['cost']:.1f}m")
+        m3.metric("Captains", " · ".join(dict.fromkeys(w["captain"] for w in best["weeks"])))
+        fmt = {"Price": "{:.1f}", "Total": "{:.1f}"}
+        st.dataframe(best["table"].style.format(fmt), hide_index=True, **UI.WIDE, height=560)
+        st.caption("Per-week cells: expected points; (C) = captain that week; b = on the bench that week.")
+    except ValueError as e:
+        st.error(str(e))
+
+with tab_plan:
+    src = st.radio("Your team", ["Import from FPL team ID", "Pick the 15"], horizontal=True)
+    cur_ids, bank, ft0 = [], 0.0, 1
+    if src == "Import from FPL team ID":
+        c1, c2 = st.columns([1, 3])
+        entry = c1.number_input("FPL team ID", 1, 20_000_000, 1, 1, help="The number in your FPL URL: …/entry/<id>/…")
+        if c1.button("Load team"):
+            try:
+                st.session_state["fpl_entry"] = PL.fpl_entry(int(entry))
+            except Exception as e:
+                st.error(f"Could not load team {entry}: {e}")
+        ent = st.session_state.get("fpl_entry")
+        if ent:
+            id_by_fpl = dict(zip(H["fpl_id"].dropna().astype(int), H.loc[H["fpl_id"].notna(), "player_id"]))
+            cur_ids = [id_by_fpl[i] for i in ent["fpl_ids"] if i in id_by_fpl]
+            bank, ft0 = ent["bank"], ent["free_transfers"]
+            c2.info(f"**{ent['team_name']}** ({ent['name']}) — picks from GW{ent['last_gw']}, value £{ent['value']:.1f}m, "
+                    f"bank £{ent['bank']:.1f}m, free transfers {ent['free_transfers']}, overall rank {ent['overall_rank']:,}. "
+                    f"{len(cur_ids)} of 15 players matched to projections.")
+    else:
+        picks = st.multiselect("Your 15", all_labels, key="my15")
+        cur_ids = [lab2id[l] for l in picks]
+        bank = st.number_input("Bank (£m)", 0.0, 50.0, 0.0, 0.1)
+    o1, o2, o3 = st.columns(3)
+    ft_have = o1.number_input("Free transfers you have", 0, 5, int(ft0), key=f"ft_have_{ft0}",
+                              help="Prefilled from the import when a team is loaded (reconstructed from your "
+                                   "transfer history); set it yourself if that is wrong.")
+    max_tr = o2.selectbox("Max transfers a week", ["no limit", 1, 2, 3], index=0)
+    hit = o3.number_input("Points per extra transfer", 0.0, 8.0, 4.0, 1.0)
+    if len(cur_ids) == 15:
+        try:
+            plan = PL.plan_transfers(H, list(gws_ahead), cur_ids, bank=bank, free_transfers=int(ft_have),
+                                     discount=discount, objective=h_obj, hit_cost=hit,
+                                     max_transfers_per_gw=(None if max_tr == "no limit" else int(max_tr)))
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Plan: expected points", f"{plan['total']:.0f}", help="XI points with captain doubled, minus hits, no discount")
+            m2.metric("Do nothing", f"{plan['baseline_total']:.0f}", help="Keep the squad, best XI each week")
+            m3.metric("Gain from transfers", f"{plan['total'] - plan['baseline_total']:+.1f}")
+            wk = pd.DataFrame([dict(GW=w["gw"], Free=w["free_before"], Out=", ".join(w["transfers_out"]) or "—",
+                                    In=", ".join(w["transfers_in"]) or "—", Hits=w["hits"], Captain=w["captain"],
+                                    XI=round(w["xi_points"], 1), Cost=round(w["cost"], 1)) for w in plan["weeks"]])
+            st.dataframe(wk, hide_index=True, **UI.WIDE)
+            with st.expander("Squad by week"):
+                st.dataframe(plan["table"].style.format({"Price": "{:.1f}", "Total": "{:.1f}"}), hide_index=True, **UI.WIDE)
+            st.caption("Selling at current price (FPL's half-profit rule ignored); no chips. Free transfers are used before hits.")
+        except ValueError as e:
+            st.error(str(e))
+    elif cur_ids:
+        st.info(f"{len(cur_ids)} of 15 players selected.")
