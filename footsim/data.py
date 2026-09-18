@@ -471,7 +471,36 @@ def load_team_matches(seasons: tuple[int, ...], league: str = LEAGUE,
         tm["reds"] = tm["reds"].fillna(0).astype(int)
     tm["npxg"] = tm["xg"] - tm["pen_xg"]
     tm["npxg_against"] = tm["xg_against"] - tm["pen_xg_against"]
+    # attack-level aggregates from the league feed: `deep` = completed passes
+    # within ~20 yards of goal (final-third entries — the closest thing to
+    # an observed ATTACK), and PPDA (pressing intensity)
+    atk = attack_aggregates(tuple(sorted(int(s) for s in seasons)), league)
+    if not atk.empty:
+        tm = tm.merge(atk, on=["season", "team", "date"], how="left")
+    for c in ("deep", "deep_against", "ppda", "ppda_against"):
+        if c not in tm.columns:
+            tm[c] = np.nan
     return game_weights(tm.sort_values(["date", "match_id"]).reset_index(drop=True), "team", recency)
+
+
+def attack_aggregates(seasons: tuple[int, ...], league: str = LEAGUE) -> pd.DataFrame:
+    """Per team-match from the league feed: deep completions for / against
+    and PPDA for / against (passes allowed per defensive action)."""
+    rows = []
+    for s in seasons:
+        try:
+            L = understat_league(league, int(s))
+        except Exception:
+            continue
+        for t in L["teams"].values():
+            team = team_code(t["title"])
+            for h in t["history"]:
+                pp = h.get("ppda", {}) or {}; pa = h.get("ppda_allowed", {}) or {}
+                rows.append(dict(season=int(s), team=team, date=pd.to_datetime(h["date"]),
+                                 deep=float(h.get("deep", np.nan)), deep_against=float(h.get("deep_allowed", np.nan)),
+                                 ppda=float(pp.get("att", np.nan)) / max(float(pp.get("def", 0) or 0), 1.0),
+                                 ppda_against=float(pa.get("att", np.nan)) / max(float(pa.get("def", 0) or 0), 1.0)))
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------

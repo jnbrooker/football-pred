@@ -77,6 +77,23 @@ SOT_CLIP = (0.20, 0.55)
 PEN_CONVERSION = 0.855
 MAX_GOALS = 10
 
+# Attacks (roadmap §6.19). Understat's `deep` completions — passes completed
+# within ~20 yards of goal — are the closest observed thing to an attack,
+# and they predict a team's FUTURE xG better than its past xG does (odd →
+# even rounds within a season, 140 team-seasons: R² 0.68 vs 0.64; together
+# deep t = 6.3, xG t = 4.5; year-to-year r 0.75 vs 0.70). Attack counts are
+# a less noisy read on attacking quality than shots, which carry shot-level
+# luck. So the volume rating CAN be a blend, in log space, of the shot-volume
+# rating and an attack-volume rating (same IPF on `deep`), weighted by
+# DEEP_WEIGHT. Fitted on the 2022–25 backtest the weight is zero: blending
+# widens the spread of the probabilities toward the market's (0.77 → 0.95 at
+# 0.5) but worsens log-loss in three seasons of four and drops the
+# calibration slope to 0.71 — it stretches the extremes without earning
+# them; 0.15 is within noise of zero. The attack ratings are still computed
+# (`deep_att` / `deep_def`) and shown on the Team Strength page.
+DEEP_WEIGHT = 0.0
+DEEP_PRIOR_N = 1.0
+
 # Match context and conversion (roadmap §6.17). Out of sample over 2021–25,
 # expected xG is properly spread (actual on expected, slope 0.90) but goals
 # are not (1.06 per side, 1.13 on margins): a side expected to concede a lot
@@ -195,6 +212,16 @@ def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS, season: int | None 
     sot_att, sot_def, home_sot = _ipf(d, "np_sot", "np_shots", teams, SOT_PRIOR_N, lg_sot, iters=iters,
                                       prior_expo=lg_shots,
                                       prior_att=prior("sot_att"), prior_def=prior("sot_def"), prior_n_team=pn)
+    # attack volume from deep completions, blended into the shot-volume rating
+    deep_att = pd.Series(0.0, index=teams); deep_def = pd.Series(0.0, index=teams); lg_deep = np.nan
+    if "deep" in d.columns and d["deep"].notna().mean() > 0.9:
+        dd = d[d["deep"].notna()].copy()
+        lg_deep = D.wmean(dd["deep"], dd["w"])
+        deep_att, deep_def, _ = _ipf(dd, "deep", "one", teams, DEEP_PRIOR_N, lg_deep, iters=iters,
+                                     prior_att=prior("vol_att"), prior_def=prior("vol_def"), prior_n_team=pn)
+        if DEEP_WEIGHT > 0:
+            vol_att = (1 - DEEP_WEIGHT) * vol_att + DEEP_WEIGHT * deep_att
+            vol_def = (1 - DEEP_WEIGHT) * vol_def + DEEP_WEIGHT * deep_def
     pen_att, pen_def, _ = _ipf(d, "pens", "one", teams, PEN_PRIOR_N, max(lg_pen, 1e-4), iters=iters,
                                fit_home=False)
 
@@ -207,6 +234,7 @@ def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS, season: int | None 
         fin=fin, gk=gk,
         sot_att=sot_att, sot_def=sot_def, home_sot=home_sot,
         pen_att=pen_att, pen_def=pen_def,
+        deep_att=deep_att, deep_def=deep_def, lg_deep=lg_deep,
         lg_shots=lg_shots, lg_xgps=lg_xgps, lg_fin=lg_fin, lg_sot=lg_sot,
         lg_pen=lg_pen, lg_og=lg_og,
         lg_goals=float(D.wmean(d["goals"], W)),
@@ -338,6 +366,8 @@ def strength_table(r: dict) -> pd.DataFrame:
             team=t, xg_for=att, xg_against=dfn, net=att - dfn,
             shots_for=r["lg_shots"] * np.exp(r["vol_att"][t]),
             shots_against=r["lg_shots"] * np.exp(r["vol_def"][t]),
+            attacks_for=(r["lg_deep"] * np.exp(r["deep_att"][t]) if np.isfinite(r.get("lg_deep", np.nan)) else np.nan),
+            attacks_against=(r["lg_deep"] * np.exp(r["deep_def"][t]) if np.isfinite(r.get("lg_deep", np.nan)) else np.nan),
             xgps_for=r["lg_xgps"] * np.exp(r["q_att"][t]),
             xgps_against=r["lg_xgps"] * np.exp(r["q_def"][t]),
             finishing=np.exp(r["fin"][t]), keeping=np.exp(-r["gk"][t]),

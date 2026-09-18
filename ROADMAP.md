@@ -436,7 +436,38 @@ margins, and the reason was conversion, not the ratings. The 2025/26 spread
 against the market went 0.68 → 0.77 (2024/25: 0.76 → 0.85) with log-loss
 improving in every season.
 
-### 6.18 Data traps, for the next person
+### 6.18 Attack by attack — what is possible, and what the data said
+A possession-by-possession engine (the NFL's drive engine) needs observed
+possessions; Understat records shots plus per-match aggregates, and no free
+source has current event data. What *is* observed is `deep` — completed
+passes within ~20 yards of goal, i.e. final-third entries, the closest
+thing to an attack — so the testable form is an attack layer inside the
+ratings: attacks → shots per attack → xG per shot.
+
+The screening test was encouraging: within a season (odd rounds → even
+rounds, 140 team-seasons, 2018–25 excluding 2020), deep predicts future xG
+better than past xG (R² 0.68 vs 0.64; together deep t = 6.3, xG t = 4.5),
+and it is more stable year to year (0.75 vs 0.70). Built as a log-space
+blend of the shot-volume and attack-volume ratings (`teams.DEEP_WEIGHT`)
+and scored on the rolling backtest, it does not survive:
+
+| weight | pooled log-loss 2022–25 | spread vs market 2025 | margin slope |
+|---|---|---|---|
+| 0 | 0.9755 | 0.77 | 0.89 |
+| 0.15 | 0.9752 | 0.83 | 0.84 |
+| 0.35 | 0.9764 | 0.90 | 0.78 |
+| 0.5 | 0.9788 | 0.95 | 0.71 |
+| 1.0 | 0.9951 | 1.14 | 0.57 |
+
+It widens the spread all the way to the market's and *worsens* the
+probabilities: attacks vary more between teams than shots, so the blend
+stretches the extremes without earning them (slope 0.71 = over-confident),
+and the within-season screening test — whole-season averages, unweighted —
+does not transfer to a rolling recency-weighted rating where the shot
+record already carries the signal. Weight set to zero; the attack ratings
+are computed and shown on the Team Strength page.
+
+### 6.19 Data traps, for the next person
 - Understat serves data from `getLeagueData/{league}/{season}` and
   `getMatchData/{id}` (gzip, needs `X-Requested-With`), not the page HTML.
 - Pinnacle closing prices are missing for ~45% of 2025/26 rows on
@@ -462,10 +493,13 @@ improving in every season.
    2021–25 residuals with three-season finishing and keeping ratings
    (shrunk over 60 / 150 / 300 xG): finishing t = 1.6–1.8, keeping 1.2–1.3,
    effect size ±2% at most on top of §6.17. Right sign, not priced.
-6. **A fixture source for cups and European matches**, which would unlock
+6. ~~Attack by attack~~ — tested (§6.18): an attack layer from deep
+   completions widens the spread but worsens calibration; not priced. A
+   true possession engine needs event data this suite does not have.
+7. **A fixture source for cups and European matches**, which would unlock
    rest days / congestion (§6.16) and is the one variable the market
    visibly prices that this suite cannot see.
-7. **Prop evaluation** (Odds API) — last, by design.
+8. **Prop evaluation** (Odds API) — last, by design.
 3. **Referee and opponent effects on cards**; fouls drawn.
 4. **Prop evaluation** — Odds API `soccer_epl` markets, frozen projection,
    settled from Understat. Last, by design.

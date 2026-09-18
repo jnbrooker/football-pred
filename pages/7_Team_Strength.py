@@ -33,14 +33,17 @@ t = T.strength_table(r)
 show = t.rename(columns={
     "xg_for": "Exp goals for", "xg_against": "Exp goals against", "net": "Net",
     "shots_for": "Shots for", "shots_against": "Shots against",
+    "attacks_for": "Attacks for", "attacks_against": "Attacks against",
     "xgps_for": "xG/shot for", "xgps_against": "xG/shot against",
     "finishing": "Finishing", "keeping": "Keeping",
     "raw_goals_for": "Raw goals for", "raw_goals_against": "Raw goals against", "matches_w": "Weight"})
-cols = ["Exp goals for", "Exp goals against", "Net", "Shots for", "Shots against",
+cols = ["Exp goals for", "Exp goals against", "Net", "Shots for", "Shots against", "Attacks for", "Attacks against",
         "xG/shot for", "xG/shot against", "Finishing", "Keeping", "Raw goals for", "Raw goals against", "Weight"]
 st.subheader("Ratings")
 st.caption("Expected goals for / against are what each side would produce against an average opponent at a "
-           "neutral venue. Finishing and keeping are shrunk hard toward 1 — the data say they are mostly noise.")
+           "neutral venue. Finishing and keeping are shrunk hard toward 1 — the data say they are mostly noise. "
+           "Attacks = Understat deep completions (final-third entries), rated the same way; shown, not priced — "
+           "blending them into the volume rating widened the spread but worsened the backtest (ROADMAP §6.19).")
 st.dataframe(show[cols].style.format({c: "{:.2f}" for c in cols} | {"xG/shot for": "{:.3f}", "xG/shot against": "{:.3f}",
                                                                      "Weight": "{:.0f}"}),
              **UI.WIDE, height=740)
