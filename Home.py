@@ -32,6 +32,7 @@ st.markdown(
     "- **Match Simulation** — pick a fixture: score distribution, 1X2, goal lines, both box scores, every identity holding in every simulation.\n"
     "- **Fantasy Projections** — every player on the gameweek's slate scored on FPL rules per simulation, with floor, ceiling and a breakdown.\n"
     "- **Backtest** — every model scored out of sample, match date by match date, against the closing market and a trailing average.\n"
+    "- **Season Projection** — the rest of the season played out thousands of times for the final table, then the seasons after it: the odds a club goes down or reaches Europe in the next few years, with a dial for what it spends.\n"
 )
 
 st.subheader("How it works")

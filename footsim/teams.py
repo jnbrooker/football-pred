@@ -171,17 +171,20 @@ def promoted_teams(tm: pd.DataFrame, season: int, extra_teams=()) -> set:
 
 
 def team_ratings(tm: pd.DataFrame, iters: int = SOLVE_ITERS, season: int | None = None,
-                 extra_teams=()) -> dict:
+                 extra_teams=(), promoted: set | None = None) -> dict:
     """Opponent-adjusted ratings from the team-match table (`data.load_team_matches`).
 
     `season` is the season being predicted (default: the latest in the data)
     and `extra_teams` any teams in its fixtures that have no matches yet —
-    both get the promoted prior if they have no matches the season before."""
+    both get the promoted prior if they have no matches the season before.
+    `promoted` overrides that set, for a caller that knows better — rating a
+    single season on its own matches (`season.season_ratings`) passes the empty
+    set, because in a one-season frame every team looks newly promoted."""
     if tm is None or tm.empty:
         raise ValueError("No team-match data — the Understat cache is empty.")
     d = tm.copy()
     season = int(season) if season is not None else int(d["season"].max())
-    promoted = promoted_teams(d, season, extra_teams)
+    promoted = promoted_teams(d, season, extra_teams) if promoted is None else set(promoted)
     d["w"] = d["w"].astype(float) if "w" in d.columns else 1.0
     d["np_shots"] = d["shots"] - d["pens"]
     d["np_goals"] = (d["goals_from_shots"] - d["pen_goals"]).clip(lower=0)

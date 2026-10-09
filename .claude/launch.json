@@ -4,8 +4,30 @@
     {
       "name": "football",
       "runtimeExecutable": ".venv/bin/streamlit",
-      "runtimeArgs": ["run", "Home.py", "--server.port", "8502", "--server.headless", "true"],
+      "runtimeArgs": [
+        "run",
+        "Home.py",
+        "--server.port",
+        "8502",
+        "--server.headless",
+        "true"
+      ],
       "port": 8502
+    },
+    {
+      "name": "football (module)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "Home.py",
+        "--server.port",
+        "8503",
+        "--server.headless",
+        "true"
+      ],
+      "port": 8503
     }
   ]
 }

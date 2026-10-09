@@ -28,6 +28,7 @@ every constant that could be fitted was fitted on those residuals.
 | Match Simulation | a fixture: score distribution, 1X2, goal lines, both box scores |
 | Fantasy Projections | the gameweek's slate scored on FPL rules per simulation; floor, ceiling, breakdown; the best £100m squad with captain; the best fixed squad for the weeks ahead; a transfer planner from your own team (FPL team-ID import) under the free-transfer / hit rules |
 | Backtest | every model scored date by date out of sample, vs the closing market and a trailing average |
+| Season Projection | the rest of the season played out for the final table and the position heat map; then the seasons after it — the odds a club goes down or reaches Europe within five years, with a dial for what it spends |
 
 Pages 1–6 pick players from the **live FPL squad** with availability tags
 (injured / suspended / doubtful with a percentage). Each has a **Fixture /
@@ -103,6 +104,23 @@ its goal-difference calibration slope is 0.95 and its probabilities have
 ~0.8× the market's spread — the rest is information a shot model does not
 have (`ROADMAP.md` §6.12, §6.17).
 
+**Season projection** (`python -m footsim.season backtest`; six completed
+seasons 2018–24, 2020/21 excluded, everything fitted on matches before the
+cut), the error in a club's FINAL points and the calibration of the
+intervals and the outcome odds:
+
+| rounds played | points MAE | "carry on at this rate" MAE | 10–90 coverage | Brier, relegation | base rate |
+|---|---|---|---|---|---|
+| 5 | 7.9 | 15.9 | 0.82 | 0.082 | 0.127 |
+| 10 | 7.0 | 10.5 | 0.78 | 0.064 | 0.127 |
+| 19 | 4.6 | 6.0 | 0.83 | 0.053 | 0.127 |
+| 28 | 3.6 | 4.3 | 0.82 | 0.038 | 0.127 |
+
+After five rounds the projection halves the error of extrapolating the
+table, and the middle 80% of its simulations contains the outcome 80% of the
+time — the probability integral transform is flat to within noise, which is
+what the within-season drift constant was fitted to deliver.
+
 **Player models** (2025/26, 36 000 player-matches, conditional on the
 player's actual role, fitted before each date) vs a trailing weighted
 average of the stat:
@@ -143,6 +161,10 @@ python -m footsim.game                 # simulate one fixture and print the box 
 python -m footsim.backtest 2025        # score the season out of sample
 python -m footsim.calibrate moments 2025   # engine vs real distributions
 python -m footsim.calibrate refit 2024 2025 # calibration slope, home advantage
+python -m footsim.season table          # the projected final table, right now
+python -m footsim.season future MCI SUN # five seasons out, and two clubs' odds
+python -m footsim.season fit            # refit the season-to-season constants
+python -m footsim.season backtest       # score past seasons' projections
 ```
 
 ## Maintaining it
@@ -161,6 +183,16 @@ decision and every finding, including the ones that did not pan out.
 - Bonus points are rebuilt from a BPS approximation; treat them as the
   least certain fantasy component.
 - No red cards, referee effects or in-match injuries.
+- The season projection knows nothing about cups or European fixtures, so no
+  congestion and no cup-winners' European place: its European places are the
+  league ones only. It reads which division each club is in
+  (football-data.co.uk E0–E3), so a club relegated twice is correctly not a
+  promotion candidate, but it has no *ratings* below the top flight: which
+  club comes up is the mechanical rate, so a fallen giant climbs back like
+  any other club in its division. It has no financial data either — ownership, spending,
+  the financial rules and points deductions all live behind one *Spend* dial
+  the user sets by hand, in units of how far a club's level moves in a
+  typical year.
 - Prop-line evaluation against a bookmaker is the last item on the roadmap
   and is not built yet.
 - For research and entertainment.

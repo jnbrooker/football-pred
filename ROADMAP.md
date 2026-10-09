@@ -178,6 +178,37 @@ P(≥ 1) — vs a trailing weighted average.
 Refit report for home advantage, rating shrinkage (calibration slope),
 `LEAD_BETA` (score spread), assist rate, penalty rate; `--write` updates.
 
+### 3.13 Season projection (`footsim/season.py`, page 11) — DONE
+The competition, not the match. Three layers, all scored out of sample by
+`python -m footsim.season backtest` (§6.20):
+
+1. **The rest of this season.** Points banked are facts; every remaining
+   fixture is played from the ordinary ratings — the analytic layer of §3.7
+   vectorised, exact to the last decimal against `teams.expected_goals` —
+   thousands of times, giving each club's final points, its distribution over
+   the twenty finishing positions, and the odds of the title, the European
+   places and the drop. Each simulation also draws a per-club strength offset
+   for the rest of the season (`DRIFT_SD`), because a rating fitted on what
+   has been played is not the strength a club carries to May.
+2. **Season to season.** A club's season strength = a slow **level** + one
+   season's **form**. Fitted on the autocovariance of the season ratings, not
+   on a one-step regression, because an AR(1) matches one year ahead by
+   construction and then forgets far too fast. The level is filtered per club
+   by a Kalman pass over its own seasons; the **spend** dial shifts it.
+3. **Promotion and relegation.** Three down, three up at the fitted promoted
+   strength, the club chosen by how long it has been away — so a club is
+   followed out of the league and back, which is what a five-year question
+   about one club needs. Eligibility comes from the club's **actual
+   division** (`data.load_division_teams`, football-data.co.uk E0–E3,
+   correctable by hand on the page): only a second-tier club can come up next
+   May, and a club that has been relegated twice climbs back one division at
+   a time at the mechanical rate, because this suite has no rating below the
+   top flight (§7.9).
+
+Outputs: the projected table with the position heat map; per club, season by
+season, P(title / top four / Europe / relegated) and P(in the league at all),
+plus the same probabilities for "at any point within the horizon".
+
 ### 3.12 Prop evaluation — LAST
 Odds API `soccer_epl` player markets (shots, shots on target, anytime scorer,
 assists, cards) beside the frozen projection; settled from Understat.
@@ -193,6 +224,7 @@ assists, cards) beside the frozen projection; settled from Understat.
 | Squads, availability, positions, penalty order | FPL `bootstrap-static` | status, chance of playing, news, element_type, price | live |
 | Per-GW FPL stats (saves, bonus, BPS, defensive contribution) | FPL `event/{gw}/live/` (current), vaastav archive (past seasons) | scoring components the shot data lacks | per GW |
 | Results, shots, closing odds | football-data.co.uk `E0.csv` | Pinnacle closing 1X2 / O2.5 for the backtest | 1 CSV / season |
+| Division membership | football-data.co.uk `E0`–`E3.csv` | which English division each club is in, for the promotion pool | 1 CSV / division / season |
 
 Understat's site moved its data behind JSON endpoints in 2025
 (`getLeagueData`, `getMatchData`; gzip; needs `X-Requested-With`). The old
@@ -219,11 +251,13 @@ fetches ≈ 2 minutes on first load; afterwards only unplayed matches refetch.
 | 6 | `game.py` + page 8 ✅ six-segment engine with game state and dominance, capped allocation, box score; calibrated by `calibrate moments` (§6.5) |
 | 7 | `fantasy.py` + page 9 ✅ FPL rules per simulation, bonus via BPS ranking, gameweek slate |
 | 8 | `backtest.py` + page 10 ✅ team layer vs closing market; player layer conditional on role; lineup model; `calibrate.py` |
-| 9 | prop evaluation (Odds API) — not started, last by design |
+| 9 | `season.py` + page 11 ✅ the rest of the season played out for the table; a club level / form process for the seasons after it; promotion and relegation; scored out of sample by `season backtest` (§6.20) |
+| 10 | prop evaluation (Odds API) — not started, last by design |
 
 ---
 
-## 6. Findings log (2023/24–2026/27 EPL, 1 177 matches, 31 000 shots)
+## 6. Findings log (2023/24–2026/27 EPL, 1 177 matches, 31 000 shots;
+§6.17 and §6.20 reach back to 2014/15)
 
 What the spike and the harness said, and what each finding changed. The
 build is dated 2026-09-13; the current season had four rounds played.
@@ -486,6 +520,165 @@ are computed and shown on the Team Strength page.
 - The python.org framework Python on macOS has no root certificates:
   `data.py` builds its SSL context from `certifi`.
 
+### 6.20 The season, and the seasons after it
+Everything here is on the **season net rating**: a club rated on one season's
+matches alone by the ordinary solver, attack minus defence in log expected
+goals (`season.season_ratings`, flat weights, no promoted prior). Understat
+gives twelve completed seasons, 2014/15–2025/26, 240 club-seasons.
+
+**A season is mostly a club's level, and partly one year's form.** Regressing
+next season's rating on this one's gives φ = 0.69 — a perfectly good one-year
+forecast and a badly wrong five-year one. The autocovariance says why: it
+does not decay toward zero. Fitting
+
+    cov(h) = ψ_level^h · sd_level² + ψ_form^h · sd_form²
+
+with the rating's own sampling noise held at its split-half estimate (0.110,
+from rating each club on its odd matches and again on its even ones):
+
+| piece | sd | ψ | reading |
+|---|---|---|---|
+| club level | 0.362 | 0.951 | a near random walk; moves 0.112 a season |
+| one season's form | 0.181 | 0.000 | does not carry over at all |
+| rating noise | 0.110 | — | 38 matches is a small sample |
+
+| h | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| observed cov | .1219 | .1249 | .1133 | .1061 | .0972 | .0958 | .0929 |
+| fitted cov | .1243 | .1183 | .1125 | .1070 | .1017 | .0968 | .0920 |
+
+So four fifths of what separates clubs, once the noise is out, is a level
+that barely moves, and the rest is a season that does not repeat. Iterating
+the AR(1) implies a correlation of 0.16 five seasons out; the data say 0.55.
+That is the difference between "everyone regresses to mid-table within five
+years" and what actually happens, and it is why the projection carries a
+level per club (a Kalman pass over its own seasons) rather than a rating.
+Style (attack *plus* defence — where a club puts its quality) is a different
+animal: ψ 0.389, sd 0.156, almost independent of the net innovation (r 0.03),
+and it barely moves a table.
+
+The long horizons are **survivor-biased**: a club that is still in the league
+five seasons later is a club that did not go down, so the h ≥ 4 covariances
+are fitted with weight 1/h. The level's ψ is the parameter that bias would
+inflate; at 0.951 it is already close to a random walk, so the projection is
+at the generous end of "a good club stays good".
+
+**Promoted sides.** 33 promoted clubs: net −0.452 recency-weighted (−0.413
+flat), sd 0.265, style −0.047 — the season-rating twin of the promoted prior
+in §6.15 and, like it, getting worse (a season trend of about −0.02 a year,
+t 1.8: suggestive, and carried by the recency weight rather than priced as a
+trend). How long they had been away: 33% had missed exactly one season, 12%
+two, 6% three, and the other half had been gone four years or more, which is
+`PROMOTED_FROM`. Two things that might have been priced and were not:
+
+- **Whether a returning club was any good before.** Regressing a promoted
+  side's net on its last top-flight net, over the 17 clubs that came back
+  within four seasons: slope 0.30, t 0.8. A promoted club is a promoted club.
+- **Bounce-back versus first-timer.** The clubs that came straight back up
+  are if anything *weaker* (−0.19, t 2.1) — the opposite of the intuition,
+  and confounded with the era trend (adding a season trend takes it to t 1.9
+  with the trend at t 1.5, on 33 observations). Neither is priced.
+
+**Within a season, strength drifts.** Rate each club on its first k matches,
+rate it again on the rest, and regress the second on the first. The residual,
+with the second rating's own sampling noise (odd versus even matches again)
+taken out, is what no rating fitted before the cut could have known:
+
+| matches played | slope | residual sd | sampling sd | drift |
+|---|---|---|---|---|
+| 4 | 0.70 | 0.305 | 0.118 | **0.282** |
+| 8 | 0.73 | 0.267 | 0.133 | **0.232** |
+| 12 | 0.75 | 0.244 | 0.141 | **0.200** |
+| 19 | 0.79 | 0.247 | 0.157 | **0.190** |
+| 26 | 0.79 | 0.263 | 0.182 | **0.190** |
+
+A floor of about 0.19 plus an early-season term — `DRIFT_SD` and
+`DRIFT_EARLY`. Independently, the out-of-sample coverage of *final points*
+over six seasons agrees on the same number:
+
+| drift floor | effective sd at 5 rounds | coverage | PIT sd | effective sd at 19 | coverage | PIT sd |
+|---|---|---|---|---|---|---|
+| none | 0.00 | 0.667 | 0.342 | 0.00 | 0.775 | 0.299 |
+| 0.10 | 0.18 | 0.758 | 0.311 | 0.14 | 0.808 | 0.288 |
+| **0.18** | **0.23** | **0.817** | **0.296** | **0.20** | **0.825** | 0.276 |
+| 0.26 | 0.30 | 0.825 | 0.276 | 0.28 | 0.850 | 0.263 |
+| 0.34 | 0.37 | 0.850 | 0.256 | 0.35 | 0.883 | 0.247 |
+
+The 10–90 band should cover 80%, and a flat probability integral transform
+has sd 0.289. Two independent routes to the same constant; 0.18 is kept
+(rather than the split sample's 0.19, which is inside the noise) because it
+is the value the harness above was scored at. Late in a season the band is a
+touch wide — 0.825 where 0.80 is wanted — and no attempt was made to shave
+it on 120 club-seasons a row. The drift changes the projection's honesty, not
+its accuracy: the points MAE is 7.88 with it and 7.88 without.
+
+**Out of sample** (`python -m footsim.season backtest`; six completed seasons
+2018/19–2024/25 with 2020/21 left out as the empty-stadium season, every
+rating fitted on matches before the cut, 120 club-seasons a row):
+
+| rounds played | points MAE | "carry on at this rate" MAE | RMSE | 10–90 coverage | Brier relegation | base | Brier top four | base |
+|---|---|---|---|---|---|---|---|---|
+| 5 | 7.88 | 15.86 | 9.74 | 0.82 | 0.082 | 0.127 | 0.065 | 0.160 |
+| 10 | 6.99 | 10.47 | 8.71 | 0.78 | 0.064 | 0.127 | 0.060 | 0.160 |
+| 19 | 4.59 | 6.02 | 5.99 | 0.83 | 0.053 | 0.127 | 0.032 | 0.160 |
+| 28 | 3.58 | 4.34 | 4.33 | 0.82 | 0.038 | 0.127 | 0.046 | 0.160 |
+
+After five rounds the model halves the error of the obvious alternative —
+extrapolate the table — and the gap narrows as the sample that alternative
+works from grows.
+
+**Draws need no help.** Independent Poissons were expected to under-produce
+draws, as they do for most goal models. Over 4 610 matches at the model's own
+expected goals they give 23.4% against an actual 23.8%, so the Dixon–Coles
+correction `DRAW_TAU` is fitted at zero and the score stays a plain pair of
+Poissons. (Home wins come out at 43.9% against 44.3%: that is the rating
+layer, and it is close too.)
+
+**A table has wider ends than the ratings do.** Hand each past season its own
+ratings and play it out. The middle comes back right and the draw count is
+within two, but the ends are pulled in:
+
+| | champion | 4th | 17th | last | spread sd | draws |
+|---|---|---|---|---|---|---|
+| actual, 12 seasons | 90.5 | 69.6 | 37.7 | 21.4 | 17.8 | 90 |
+| simulated, ×1.00 | 85.7 | 68.2 | 37.6 | 26.4 | 15.5 | 88 |
+| simulated, ×1.20 | 89.9 | 70.4 | 35.9 | 23.9 | 17.4 | 85 |
+
+A season rating is a shrunk estimate, so the spread it reports is not the
+spread clubs really have; `SPREAD_MULT` = 1.20 minimises the error over all
+twenty positions (RMSE 3.76 → 3.15) at the cost of about five draws a season.
+It applies **only** to seasons built from the season-to-season process, never
+to the live ratings, whose own spread is scored match by match (§6.12) and
+whose projection is already calibrated by the drift above. The seam is
+deliberate and it is the one place where the two halves of this page are not
+the same model.
+
+**Translation, for the dial.** Points = 52.5 + 38.9 × net over the 240
+club-seasons, so one level innovation (0.112) is 4.4 points a season. The
+spend dial is a *standing* shift, so it compounds against the level's own
+decay: +1 every summer is worth about 20 points a season by the fifth one.
+
+**The divisions below, and what the model is allowed to know about them.**
+The promotion pool was first built from "seasons since last in the Premier
+League" alone, which is wrong in a way worth recording: a club relegated
+twice looked like a live promotion candidate, because nothing in the feed
+said it had dropped again. Division membership fixes the eligibility half
+(`data.load_division_teams`, the same football-data.co.uk source the backtest
+already uses, one CSV per division per season) — a club can only come up from
+the second tier, and below that it climbs one division a year. It does *not*
+fix the other half: with no ratings for those divisions, which club goes up
+is drawn at the mechanical rate — of 24 clubs three go up and three (or four)
+go down — so a fallen giant in League One comes back at the rate a random
+League One club does. That is a known, stated bias, and §7.9 is the fix.
+
+**What is not modelled, and would move these numbers.** No cup or European
+fixtures, so no congestion and no cup-winners' European place — the European
+places here are the league ones. No ownership, takeover, financial-rules or
+points-deduction layer: the suite has no financial data at all, which is why
+`spend` is a dial the user sets rather than a fitted coefficient. And no
+opinion about which second-tier club is good this year, which is the single
+largest piece of information a human has and this model does not.
+
 ## 7. Next (ranked)
 
 1. ~~Player-level team strength across transfers~~ — tested, nothing
@@ -509,6 +702,17 @@ are computed and shown on the Team Strength page.
    rest days / congestion (§6.16) and is the one variable the market
    visibly prices that this suite cannot see.
 8. **Prop evaluation** (Odds API) — last, by design.
+9. **Ratings for the divisions below** — the biggest single gap in the
+   season layer (§6.20). Which division a club is in is now read from
+   football-data.co.uk (`data.load_division_teams`), so eligibility is right;
+   *which* club goes up is still the mechanical rate, so a fallen giant in
+   League One climbs back like a random League One club. `E1`–`E3.csv` carry
+   results and closing odds — enough for a strength rating even without
+   shots — which would replace both that and "a promoted club is the class
+   average".
+10. **Spend as data** — transfer spend or wage bills per club-season would
+   let the level innovation in §6.20 be *fitted* against money rather than
+   left as a dial the user sets. Nothing in the current feeds carries it.
 3. **Referee and opponent effects on cards**; fouls drawn.
 4. **Prop evaluation** — Odds API `soccer_epl` markets, frozen projection,
    settled from Understat. Last, by design.

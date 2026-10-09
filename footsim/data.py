@@ -144,11 +144,13 @@ TEAM_ALIASES = {
     "BRE": ("Brentford",),
     "BHA": ("Brighton", "Brighton and Hove Albion", "Brighton & Hove Albion"),
     "BUR": ("Burnley",),
+    "CAR": ("Cardiff", "Cardiff City"),
     "CHE": ("Chelsea",),
     "COV": ("Coventry", "Coventry City"),
     "CRY": ("Crystal Palace",),
     "EVE": ("Everton",),
     "FUL": ("Fulham",),
+    "HUD": ("Huddersfield", "Huddersfield Town"),
     "HUL": ("Hull", "Hull City"),
     "IPS": ("Ipswich", "Ipswich Town"),
     "LEE": ("Leeds", "Leeds United"),
@@ -156,13 +158,20 @@ TEAM_ALIASES = {
     "LIV": ("Liverpool",),
     "LUT": ("Luton", "Luton Town"),
     "MCI": ("Man City", "Manchester City"),
+    "MID": ("Middlesbrough",),
     "MUN": ("Man Utd", "Man United", "Manchester United"),
     "NEW": ("Newcastle", "Newcastle United"),
     "NFO": ("Nott'm Forest", "Nottingham Forest", "Nottm Forest"),
+    "NOR": ("Norwich", "Norwich City"),
+    "QPR": ("Queens Park Rangers", "QPR"),
     "SHU": ("Sheffield United", "Sheffield Utd"),
     "SOU": ("Southampton",),
+    "STK": ("Stoke", "Stoke City"),
     "SUN": ("Sunderland",),
+    "SWA": ("Swansea", "Swansea City"),
     "TOT": ("Spurs", "Tottenham", "Tottenham Hotspur"),
+    "WAT": ("Watford",),
+    "WBA": ("West Bromwich Albion", "West Brom", "West Bromwich"),
     "WHU": ("West Ham", "West Ham United"),
     "WOL": ("Wolves", "Wolverhampton Wanderers"),
 }
@@ -437,7 +446,15 @@ def _read_cached(seasons, league, which: str) -> pd.DataFrame:
             frames.append(pd.read_parquet(p))
     if not frames:
         return pd.DataFrame(columns=SHOT_COLS if which == "shots" else ROSTER_COLS)
-    return pd.concat(frames, ignore_index=True)
+    out = pd.concat(frames, ignore_index=True)
+    # a cache written before a club had a code in TEAM_ALIASES holds its full
+    # name; recode on the way in so old parquet still joins to live fixtures
+    for c in ("team", "opp"):
+        if c in out.columns:
+            long = out[c].astype(str).str.len() > 3
+            if long.any():
+                out.loc[long, c] = out.loc[long, c].map(team_code)
+    return out
 
 
 @ttl_cache(maxsize=8)
@@ -793,6 +810,34 @@ def load_odds(seasons: tuple[int, ...]) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
+
+
+DIVISIONS = {"E0": 1, "E1": 2, "E2": 3, "E3": 4}     # Premier League down to League Two
+_FD_DIV_URL = "https://www.football-data.co.uk/mmz4281/{yy}/{div}.csv"
+
+
+@ttl_cache(maxsize=4)
+def load_division_teams(seasons: tuple[int, ...], divisions: tuple[str, ...] = tuple(DIVISIONS)) -> pd.DataFrame:
+    """Which English division every club is in, per season: season, division,
+    tier (1 = Premier League), team.
+
+    Only the team list is taken, so the same football-data.co.uk feed the
+    backtest already uses answers "is this club in the Championship or has it
+    dropped to League One?" — which is the difference between a club that can
+    be promoted next May and one that cannot. Returns an empty frame if the
+    feed cannot be reached; callers must cope (see `season.club_tiers`)."""
+    rows = []
+    for s in seasons:
+        yy = f"{str(int(s))[-2:]}{str(int(s) + 1)[-2:]}"
+        for div in divisions:
+            try:
+                txt = _get_text(_FD_DIV_URL.format(yy=yy, div=div), timeout=10.0)
+                d = pd.read_csv(pd.io.common.StringIO(txt)).dropna(subset=["HomeTeam", "AwayTeam"])
+            except Exception:
+                continue
+            for t in sorted(set(d["HomeTeam"]) | set(d["AwayTeam"])):
+                rows.append(dict(season=int(s), division=div, tier=DIVISIONS[div], team=team_code(t)))
+    return pd.DataFrame(rows, columns=["season", "division", "tier", "team"])
 
 
 def vig_free(prices: pd.DataFrame, cols=("ps_h", "ps_d", "ps_a")) -> pd.DataFrame:
