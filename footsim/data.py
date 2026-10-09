@@ -223,9 +223,54 @@ _US = "https://understat.com"
 @ttl_cache(maxsize=16)
 def understat_league(league: str, season: int) -> dict:
     """The raw `getLeagueData` payload: dates (fixtures), teams (match
-    history per team), players (season totals)."""
-    return _get_json(f"{_US}/getLeagueData/{league}/{int(season)}",
-                     referer=f"{_US}/league/{league}/{int(season)}")
+    history per team), players (season totals).
+
+    Each good payload is kept on disk, and that copy is served when Understat
+    cannot be reached (site down, DNS blocked) so the app still runs."""
+    p = CACHE / f"league_{league}_{int(season)}.json"
+    try:
+        L = _get_json(f"{_US}/getLeagueData/{league}/{int(season)}",
+                      referer=f"{_US}/league/{league}/{int(season)}")
+    except Exception:
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+        raise
+    p.write_text(json.dumps(L), encoding="utf-8")
+    return L
+
+
+FIXTURE_COLS = ["match_id", "season", "date", "home", "away", "home_id", "away_id",
+                "home_goals", "away_goals", "home_xg", "away_xg", "played",
+                "fc_home", "fc_draw", "fc_away", "round"]
+
+
+def _fixtures_from_cache(season: int, league: str) -> list[dict]:
+    """Played fixtures of a season rebuilt from the cached rosters and shots,
+    for when the league feed cannot be reached and has no disk copy. Only
+    played matches are in that cache, so remaining fixtures are missing."""
+    sp, rp = _cache_paths(league, int(season))
+    if not rp.exists():
+        return []
+    r = _read_cached((int(season),), league, "rosters")
+    if r.empty:
+        return []
+    sh = _read_cached((int(season),), league, "shots")
+    xg = sh.groupby(["match_id", "team"])["xg"].sum() if not sh.empty else pd.Series(dtype=float)
+    by = r.groupby(["match_id", "team"]).agg(goals=("goals", "sum"), og=("own_goals", "sum"),
+                                             home=("home", "first"), opp=("opp", "first"), date=("date", "first"))
+    rows = []
+    for (mid, team), g in by[by["home"].astype(bool)].iterrows():
+        opp = g["opp"]
+        a = by.loc[(mid, opp)] if (mid, opp) in by.index else None
+        og_for_home = float(a["og"]) if a is not None else 0.0
+        rows.append(dict(
+            match_id=int(mid), season=int(season), date=pd.to_datetime(g["date"]),
+            home=team, away=opp, home_id=np.nan, away_id=np.nan,
+            home_goals=int(g["goals"] + og_for_home),
+            away_goals=int((a["goals"] if a is not None else 0) + g["og"]),
+            home_xg=float(xg.get((mid, team), np.nan)), away_xg=float(xg.get((mid, opp), np.nan)),
+            played=True, fc_home=np.nan, fc_draw=np.nan, fc_away=np.nan))
+    return rows
 
 
 def load_fixtures(seasons: tuple[int, ...], league: str = LEAGUE) -> pd.DataFrame:
@@ -237,6 +282,7 @@ def load_fixtures(seasons: tuple[int, ...], league: str = LEAGUE) -> pd.DataFram
         try:
             L = understat_league(league, int(s))
         except Exception:
+            rows.extend(_fixtures_from_cache(int(s), league))
             continue
         for d in L["dates"]:
             rows.append(dict(
@@ -254,7 +300,7 @@ def load_fixtures(seasons: tuple[int, ...], league: str = LEAGUE) -> pd.DataFram
                 fc_away=float(d["forecast"]["l"]) if d.get("forecast") else np.nan,
             ))
     if not rows:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=FIXTURE_COLS).astype({"played": bool})
     f = pd.DataFrame(rows).sort_values(["date", "match_id"]).reset_index(drop=True)
     return add_rounds(f)
 
